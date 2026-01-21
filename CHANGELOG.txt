@@ -1,13 +1,14 @@
-CHIM Cached Connector v1.3.5 - Release Notes
-============================================
+CHIM Cached Connector v1.4 - Release Notes
+==========================================
 Release Date: 2026-01-21
 Compatible with: CHIM 2.0.3
 
 OVERVIEW
 --------
-v1.3.5 restructures the package into CORE and ADDITIONALS for easier
-maintenance when HerikaServer updates. The UI now conditionally shows
-features based on which files are installed.
+v1.4 is a significant release that:
+1. Restructures the package into CORE and ADDITIONALS for easier maintenance
+2. Removes the verbose connector (never worked properly)
+3. Adds conditional UI toggle for Minimize Quality Instructions
 
 KEY CHANGES
 -----------
@@ -16,55 +17,35 @@ KEY CHANGES
 
    Package now clearly separated into:
 
-   CORE FILES (6 files - minimum required):
+   CORE FILES (5 files - minimum required):
    - conf/conf_schema.json
    - lib/core/llm_connector.class.php
    - ui/core/llm_connectors.php
    - connector/openrouterjsoncached.php
    - connector/openrouterjsoncached_helpers.php
-   - connector/openrouterjsoncached_verbose.php
 
    ADDITIONALS FILES (3 files - enhanced features):
    - prompts/dialogue_prompt.php
    - lib/data_functions.php
    - lib/chat_helper_functions.php
 
-2. CONDITIONAL UI TOGGLE
+2. REMOVED VERBOSE CONNECTOR
+
+   The verbose connector has been completely removed:
+   - Deleted: connector/openrouterjsoncached_verbose.php
+   - Removed from UI dropdown
+   - Removed from conf_schema.json
+   - Removed from llm_connector.class.php
+
+   Reason: It never worked properly and just added maintenance overhead.
+
+3. CONDITIONAL UI TOGGLE
 
    The "Minimize Quality Instructions" toggle is now conditionally displayed:
    - Shows only when prompts/dialogue_prompt.php contains the marker
      "CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT"
    - Hidden if vanilla dialogue_prompt.php is present
    - Prevents confusing UI options that do nothing
-
-3. REMOVED ui/events-memories.php
-
-   This file has been removed from the package:
-   - Its change was backwards-compatible (handles array content format)
-   - Not strictly required for cached connector functionality
-   - Reduces files to maintain
-
-TECHNICAL DETAILS
------------------
-
-Modified Files:
-- ui/core/llm_connectors.php
-  * Added conditional check for minimize_quality_prompt toggle
-  * Uses file content detection (strpos for marker comment)
-  * Updated version to v1.3.5
-
-- prompts/dialogue_prompt.php
-  * Added marker comment: "CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT"
-  * No functional changes
-
-- connector/openrouterjsoncached.php
-  * Updated VERSION to v1.3.5 (line 12)
-
-- connector/openrouterjsoncached_verbose.php
-  * Updated VERSION to v1.3.5 (line 13)
-
-Removed Files:
-- ui/events-memories.php (no longer in package)
 
 INSTALLATION SCENARIOS
 ----------------------
@@ -74,7 +55,7 @@ Scenario 1: Full Installation (Recommended)
 - All features available
 
 Scenario 2: Core Only (Quick Recovery After HerikaServer Update)
-- Install only CORE files (6 files)
+- Install only CORE files (5 files)
 - Connector works with main features
 - "Minimize Quality" toggle hidden
 - Simple format sentences batch slightly
@@ -85,20 +66,49 @@ Scenario 3: Staged Update
 2. Install ADDITIONALS when time permits
 3. UI automatically shows features as they're installed
 
+TECHNICAL DETAILS
+-----------------
+
+Removed Files:
+- connector/openrouterjsoncached_verbose.php (deleted)
+
+Modified Files:
+- ui/core/llm_connectors.php
+  * Removed verbose connector from dropdown
+  * Removed verbose logging UI option
+  * Removed verbose JavaScript logic
+  * Added conditional check for minimize_quality_prompt toggle
+  * Updated version to v1.4
+
+- conf/conf_schema.json
+  * Removed openrouterjsoncached_verbose from CONNECTORS list
+  * Removed entire openrouterjsoncached_verbose section
+  * Removed verbose_logging field from openrouterjsoncached
+
+- lib/core/llm_connector.class.php
+  * Removed openrouterjsoncached_verbose else-if block
+
+- connector/openrouterjsoncached.php
+  * Updated VERSION to v1.4
+
+- prompts/dialogue_prompt.php
+  * Added marker comment (from v1.3.5): "CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT"
+
 UPGRADE NOTES
 -------------
 
-Users upgrading from v1.3.4:
-- All previous functionality preserved
+Users upgrading from v1.3.x:
+- Verbose connector is gone - if you were using it, switch to openrouterjsoncached
+- All previous functionality preserved in the main connector
 - Package is now split but can be installed together as before
-- events-memories.php no longer overwritten
-
-Users upgrading from earlier versions:
-- All previous improvements included
-- Review earlier changelogs for other changes
 
 PREVIOUS RELEASES
 -----------------
+
+v1.3.5 (2026-01-21 - internal):
+- Core/Additionals split structure
+- Conditional minimize_quality_prompt toggle
+- Removed events-memories.php from package
 
 v1.3.4 (2026-01-16):
 - Fixed asterisk/dash stripping in sentence splitting
@@ -125,7 +135,7 @@ COMPATIBILITY
 
 Works with CHIM 2.0.3
 Backward compatible with all v1.3.x configurations
-No breaking changes
+No breaking changes (unless you were using verbose connector)
 
 For complete feature list: PACKAGE_CONTENTS.txt
 For development history: CLAUDE_changelog.md

@@ -1,5 +1,5 @@
-CHIM Cached Connector v1.3.5 - Package Contents
-===============================================
+CHIM Cached Connector v1.4 - Package Contents
+==============================================
 
 This package is split into CORE and ADDITIONALS for easier maintenance
 when HerikaServer updates. The CORE files are the minimum required to
@@ -14,7 +14,6 @@ CORE FILES (Required - Minimum for connector to function):
 - ui/core/llm_connectors.php     - Configuration UI
 - connector/openrouterjsoncached.php - Main connector
 - connector/openrouterjsoncached_helpers.php - Helper functions
-- connector/openrouterjsoncached_verbose.php - Verbose variant
 
 ADDITIONALS FILES (Optional - Enhanced features):
 - prompts/dialogue_prompt.php    - Minimize Quality Instructions feature
@@ -30,7 +29,7 @@ DOCUMENTATION:
 DIRECTORY STRUCTURE
 -------------------
 
-chim_v1.3.5_package/
+chim_v1.4_package/
 ├── CHANGELOG.txt
 ├── PACKAGE_CONTENTS.txt (this file)
 ├── CLAUDE_changelog.md
@@ -41,7 +40,6 @@ chim_v1.3.5_package/
 ├── connector/
 │   ├── openrouterjsoncached.php
 │   ├── openrouterjsoncached_helpers.php
-│   ├── openrouterjsoncached_verbose.php
 │   └── OPENROUTERJSONCACHED_README.md
 ├── lib/
 │   └── core/
@@ -92,7 +90,7 @@ Scenario 1: Full Installation (Recommended)
 - All features available
 
 Scenario 2: Core Only (Quick HerikaServer Update Recovery)
-- Install only CORE files
+- Install only CORE files (5 files)
 - Connector works with all main features
 - "Minimize Quality" toggle hidden (feature not available)
 - Simple format sentences batch slightly (75-char minimum)
@@ -112,20 +110,17 @@ CORE Files:
   Registers the cached connector options in CHIM's configuration system
 
 - lib/core/llm_connector.class.php
-  Adds connector instantiation (else-if branches for cached connectors)
+  Adds connector instantiation (else-if branch for cached connector)
 
-- ui/core/llm_connectors.php (v1.3.5)
+- ui/core/llm_connectors.php (v1.4)
   Configuration UI with conditional "Minimize Quality" toggle
   Shows toggle only when additionals are installed
 
-- connector/openrouterjsoncached.php (v1.3.5)
+- connector/openrouterjsoncached.php (v1.4)
   Main connector: API communication, caching, thinking, streaming
 
 - connector/openrouterjsoncached_helpers.php
   Format building, simple format parsing, sentence splitting
-
-- connector/openrouterjsoncached_verbose.php (v1.3.5)
-  Verbose variant with additional logging
 
 ADDITIONALS Files:
 
@@ -141,41 +136,40 @@ ADDITIONALS Files:
   Fixed regex preserves asterisks, dashes, hashes, at-signs
   Benefits ALL connectors, not just cached
 
-CHANGES FROM v1.3.4
+CHANGES FROM v1.3.5
 -------------------
 
-- REMOVED: ui/events-memories.php (backwards-compatible, not required)
-- ADDED: Conditional "Minimize Quality" toggle visibility
-- ADDED: Marker comment in dialogue_prompt.php for feature detection
-- RESTRUCTURED: Package now clearly split into CORE and ADDITIONALS
-- Updated version to v1.3.5
+- REMOVED: Verbose connector entirely (openrouterjsoncached_verbose.php)
+- REMOVED: Verbose connector from UI dropdown
+- REMOVED: Verbose connector from conf_schema.json
+- REMOVED: Verbose connector from llm_connector.class.php
+- Updated version to v1.4
 
 VERSION COMPATIBILITY
 ---------------------
 
-v1.3.5 files:
+v1.4 files:
 - connector/openrouterjsoncached.php
-- connector/openrouterjsoncached_verbose.php
 - ui/core/llm_connectors.php
-- prompts/dialogue_prompt.php (marker added)
+- prompts/dialogue_prompt.php (marker added in v1.3.5)
 
-Unchanged from v1.3.4:
+Unchanged from v1.3.5:
 - lib/chat_helper_functions.php (asterisk fix)
 - lib/data_functions.php (streaming logic)
-- lib/core/llm_connector.class.php
-- conf/conf_schema.json
+- lib/core/llm_connector.class.php (minus verbose)
+- conf/conf_schema.json (minus verbose)
 - connector/openrouterjsoncached_helpers.php
 
 QUICK REFERENCE
 ---------------
 
 After HerikaServer update, to restore connector:
-1. Copy CORE files (6 files)
+1. Copy CORE files (5 files)
 2. Test - connector should work
 3. Copy ADDITIONALS files (3 files) when ready
 4. "Minimize Quality" toggle appears automatically
 
 Package Date: 2026-01-21
 CHIM Version: 2.0.3
-Connector Version: 1.3.5
-Key Feature: Core/Additionals split for easier maintenance
+Connector Version: 1.4
+Key Feature: Core/Additionals split for easier maintenance, removed verbose connector

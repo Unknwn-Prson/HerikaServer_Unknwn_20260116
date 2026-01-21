@@ -659,3 +659,60 @@ actually available, preventing user confusion.
 - File content detection is robust against leftover files from old installations
 
 ---
+
+### Entry 12: v1.4 - Remove verbose connector, finalize Core/Additionals split
+**Timestamp:** 2026-01-21
+**Version:** v1.4
+
+**Changes Made:**
+
+1. **Removed Verbose Connector Entirely:**
+   - Deleted: `connector/openrouterjsoncached_verbose.php`
+   - Removed from UI dropdown (both partial and modal forms)
+   - Removed verbose_logging UI option divs
+   - Removed verbose JavaScript show/hide logic
+   - Removed from `conf/conf_schema.json` CONNECTORS list
+   - Removed entire `openrouterjsoncached_verbose` section from conf_schema.json
+   - Removed `verbose_logging` field from non-verbose cached connector config
+   - Removed from `lib/core/llm_connector.class.php` else-if block
+
+   **Reason:** The verbose connector never actually worked properly and just added
+   maintenance overhead. All functionality is in the main connector.
+
+2. **Updated Version to v1.4:**
+   - `connector/openrouterjsoncached.php` - VERSION constant
+   - `ui/core/llm_connectors.php` - version display (2 locations)
+   - `CHANGELOG.txt` - release notes
+   - `PACKAGE_CONTENTS.txt` - package documentation
+
+3. **Final Core/Additionals Structure:**
+
+   CORE FILES (5 files):
+   - conf/conf_schema.json
+   - lib/core/llm_connector.class.php
+   - ui/core/llm_connectors.php
+   - connector/openrouterjsoncached.php
+   - connector/openrouterjsoncached_helpers.php
+
+   ADDITIONALS FILES (3 files):
+   - prompts/dialogue_prompt.php (with CHIM_CACHED_FEATURE marker)
+   - lib/data_functions.php
+   - lib/chat_helper_functions.php
+
+**Files Modified:**
+- `connector/openrouterjsoncached.php` - Version to v1.4
+- `ui/core/llm_connectors.php` - Removed verbose options, version to v1.4
+- `conf/conf_schema.json` - Removed verbose connector entries
+- `lib/core/llm_connector.class.php` - Removed verbose instantiation
+- `CHANGELOG.txt` - Updated for v1.4
+- `PACKAGE_CONTENTS.txt` - Updated for v1.4
+
+**Files Deleted:**
+- `connector/openrouterjsoncached_verbose.php`
+
+**Conceptual Goal:**
+Simplify the package by removing the non-functional verbose connector, reducing
+maintenance burden. The Core/Additionals split allows faster recovery after
+HerikaServer updates by only requiring 5 core files to restore basic functionality.
+
+---
