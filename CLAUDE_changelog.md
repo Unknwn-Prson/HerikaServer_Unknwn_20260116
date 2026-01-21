@@ -430,3 +430,289 @@ Enable true sentence-by-sentence streaming for simple format while preserving th
 
 ---
 
+## Session: 2026-01-16 - Fix Asterisk/Dash Stripping in Sentence Splitting
+
+### Entry 10: Fix punctuation stripping in split_at_end_of_sentence()
+**Timestamp:** 2026-01-16 UTC
+**Version:** v1.3.4
+**File Modified:**
+- `lib/chat_helper_functions.php` (lines 290-295)
+
+**Problem Identified:**
+User reported that asterisks were being stripped from the start of sentences (but not the first sentence). For example:
+- Input: `Hello there.* rises from chair *.`
+- Output sentence 2: `rises from chair *.` (leading asterisk missing!)
+
+The issue was **inconsistent** - sometimes middle sentences were fine. This inconsistency was explained by whether the LLM included a space after the period:
+- `Hello there. * rises...` → asterisk preserved (space before asterisk)
+- `Hello there.* rises...` → asterisk consumed (no space before asterisk)
+
+**Root Cause Analysis:**
+
+The `split_at_end_of_sentence()` function in `lib/chat_helper_functions.php` used this regex:
+```php
+$splitSentenceRegex = "/(?<=[" . $eosPunc . "])(?!\.)[\p{P}]?[\s+]?/u";
+```
+
+The `[\p{P}]?` part matches ANY Unicode punctuation character. When there was no space between the sentence-ending period and the next character, the regex would consume:
+- `*` (asterisks) - used for action/narration markers
+- `-` (dashes) - used for pauses
+- `#` (hashes) - used for tags
+- `@` (at signs) - used for mentions
+- And any other punctuation in `\p{Po}` category
+
+**Why `[\p{P}]` Was Originally There:**
+The intent was to consume closing punctuation that legitimately follows sentence endings, such as:
+- Closing quotes: `She said "Hello." Then left.` (the `"` after `.` should be consumed)
+- Closing brackets: `(Hello there.) Next sentence.` (the `)` after `.` should be consumed)
+
+**The Fix:**
+
+Changed from consuming ANY punctuation to explicitly EXCLUDING problematic characters:
+
+Old regex:
+```php
+$splitSentenceRegex = "/(?<=[" . $eosPunc . "])(?!\.)[\p{P}]?[\s+]?/u";
+```
+
+New regex:
+```php
+$splitSentenceRegex = "/(?<=[" . $eosPunc . "])(?!\.)[^\p{L}\p{N}\s\*\-\#\@\(\[\{]?[\s+]?/u";
+```
+
+The new pattern `[^\p{L}\p{N}\s\*\-\#\@\(\[\{]?` matches any character that is NOT:
+- `\p{L}` - Letters (shouldn't be consumed anyway)
+- `\p{N}` - Numbers (shouldn't be consumed anyway)
+- `\s` - Whitespace (shouldn't be consumed anyway)
+- `\*` - Asterisks (action/narration markers)
+- `\-` - Dashes (pause markers)
+- `\#` - Hashes (tags)
+- `\@` - At signs (mentions)
+- `\(` `\[` `\{` - Opening brackets (start of content)
+
+This means closing quotes (`"`, `'`) and closing brackets (`)`, `]`, `}`) are still consumed correctly.
+
+**Test Results:**
+
+| Input | Before (v1.3.3) | After (v1.3.4) |
+|-------|-----------------|----------------|
+| `Hello there.* rises *` | `["Hello there.","rises *"]` ❌ | `["Hello there.","* rises *"]` ✓ |
+| `Hello there.- pauses -` | `["Hello there.","pauses -"]` ❌ | `["Hello there.","- pauses -"]` ✓ |
+| `Hello there.# tagged` | `["Hello there.","tagged"]` ❌ | `["Hello there.","# tagged"]` ✓ |
+| `Hello there.@ mention` | `["Hello there.","mention"]` ❌ | `["Hello there.","@ mention"]` ✓ |
+| `She said "Hello." Then` | `["She said \"Hello.","Then"]` ✓ | `["She said \"Hello.","Then"]` ✓ |
+| `(Hello.) Next` | `["(Hello.","Next"]` ✓ | `["(Hello.","Next"]` ✓ |
+| `Hello?! What` | `["Hello?","What"]` ✓ | `["Hello?","What"]` ✓ |
+
+**Files Updated:**
+- `lib/chat_helper_functions.php` - Fixed regex in `split_at_end_of_sentence()` function
+- `connector/openrouterjsoncached.php` - Version updated to v1.3.4
+- `connector/openrouterjsoncached_verbose.php` - Version updated to v1.3.4
+- `ui/core/llm_connectors.php` - Version display updated to v1.3.4
+
+**Also updated commented-out code in `split_sentences_stream()` to reflect the fix for consistency.**
+
+**Conceptual Goal:**
+Preserve action/narration markers (asterisks, dashes) and other semantic punctuation while still correctly handling closing quotes and brackets that legitimately follow sentence-ending punctuation.
+
+**Critical Analysis:**
+- The fix is surgical - only affects the specific character class in the regex
+- Backward compatible - closing quotes/brackets still work correctly
+- Forward compatible - explicitly excludes known problematic characters
+- The inconsistency users saw was due to LLM spacing behavior, not a race condition or timing issue
+
+---
+
+## Versioning and Documentation Requirements
+
+**IMPORTANT:** The following requirements MUST be followed for ALL changes, no matter how small:
+
+1. **Version Number Updates:**
+   - Every change requires a version increment (e.g., v1.3.3 → v1.3.4)
+   - Update version in: `connector/openrouterjsoncached.php`, `connector/openrouterjsoncached_verbose.php`, `ui/core/llm_connectors.php`
+   - Use format: `vX.Y.Z for CHIM X.X.X | YYYY/MM/DD`
+
+2. **CLAUDE_changelog.md Entry:**
+   - Every change MUST have an entry in this file
+   - Include: timestamp, version, files modified, problem identified, solution, test results
+   - Be thorough - future developers need to understand the change
+
+3. **CHANGELOG.txt Update:**
+   - Update the release notes for users
+   - Focus on user-facing changes and benefits
+
+4. **PACKAGE_CONTENTS.txt Update:**
+   - Update file descriptions and version references
+   - Update "CHANGES FROM vX.X.X" section
+
+5. **Git Commit:**
+   - Commit with descriptive message
+   - Push to appropriate branch
+
+**These requirements ensure:**
+- Complete audit trail of all changes
+- Easy debugging when issues arise
+- Proper versioning for user installations
+- No lost context between development sessions
+
+---
+
+
+## Session: 2026-01-21 - Core/Additionals Split
+
+### Entry 11: Package restructure - Core/Additionals split with conditional UI
+**Timestamp:** 2026-01-21
+**Version:** v1.3.5
+
+**Problem Identified:**
+When HerikaServer updates, the cached connector requires updating multiple files which is time-consuming.
+The user requested a way to split the package into "core" files (minimum required) and "additionals"
+(enhanced features) to allow faster recovery after HerikaServer updates.
+
+Additionally, the "Minimize Quality Instructions" toggle was showing in the UI even when the
+feature wasn't installed (prompts/dialogue_prompt.php not overwritten), causing confusion.
+
+**Solution:**
+
+1. **Package Split:**
+   
+   CORE FILES (6 files - minimum required):
+   - conf/conf_schema.json - Connector registration
+   - lib/core/llm_connector.class.php - Connector instantiation
+   - ui/core/llm_connectors.php - Configuration UI
+   - connector/openrouterjsoncached.php - Main connector
+   - connector/openrouterjsoncached_helpers.php - Helper functions
+   - connector/openrouterjsoncached_verbose.php - Verbose variant
+
+   ADDITIONALS FILES (3 files - enhanced features):
+   - prompts/dialogue_prompt.php - Minimize Quality Instructions feature
+   - lib/data_functions.php - Immediate sentence streaming
+   - lib/chat_helper_functions.php - Asterisk/dash preservation fix
+
+2. **Conditional UI Toggle:**
+   
+   Added marker comment to prompts/dialogue_prompt.php:
+   ```php
+   // CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT
+   ```
+   
+   Added conditional check in ui/core/llm_connectors.php (two locations):
+   ```php
+   <?php if (@strpos(file_get_contents(__DIR__.'/../../prompts/dialogue_prompt.php'), 'CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT') !== false): ?>
+       <!-- minimize_quality_prompt checkbox here -->
+   <?php endif; ?>
+   ```
+   
+   This hides the toggle when the additionals aren't installed, preventing UI confusion.
+
+3. **Removed ui/events-memories.php:**
+   
+   This file was removed from the package because:
+   - Its change (handling array content format) is backwards-compatible
+   - Not strictly required for cached connector functionality
+   - Reduces files to maintain
+
+**Files Modified:**
+- `prompts/dialogue_prompt.php` - Added marker comment (line 28)
+- `ui/core/llm_connectors.php` - Added conditional checks (lines ~456-464, ~1491-1499), updated version
+- `connector/openrouterjsoncached.php` - Updated VERSION to v1.3.5
+- `connector/openrouterjsoncached_verbose.php` - Updated VERSION to v1.3.5
+- `CHANGELOG.txt` - Updated for v1.3.5
+- `PACKAGE_CONTENTS.txt` - Complete rewrite for Core/Additionals structure
+
+**Files Removed from Package:**
+- `ui/events-memories.php` - No longer included
+
+**Installation Scenarios:**
+
+Scenario 1: Full Installation (Recommended)
+- Install all CORE + ADDITIONALS files
+- All features available
+
+Scenario 2: Core Only (Quick Recovery)
+- Install only CORE files (6 files)
+- Connector works with main features
+- "Minimize Quality" toggle hidden (feature not available)
+- Simple format sentences batch slightly (75-char minimum)
+- Asterisk stripping bug present (cosmetic)
+
+Scenario 3: Staged Update
+1. Install CORE files to restore connector functionality
+2. Install ADDITIONALS when time permits
+3. UI automatically shows features as they're installed
+
+**Why File Content Check Instead of Marker File:**
+The user noted that marker files could be left behind from previous installations,
+causing stale feature detection. By checking for a marker comment INSIDE the
+dialogue_prompt.php file itself, the detection is always accurate - if the file
+is replaced with vanilla, the marker disappears automatically.
+
+**Conceptual Goal:**
+Enable faster recovery after HerikaServer updates by minimizing the number of files
+that MUST be updated. The UI intelligently adapts to show only features that are
+actually available, preventing user confusion.
+
+**Critical Analysis:**
+- Core files are the minimum needed for connector to appear and function
+- Additionals provide enhanced features but connector works without them
+- Conditional UI prevents "dead" toggles that do nothing
+- File content detection is robust against leftover files from old installations
+
+---
+
+### Entry 12: v1.4 - Remove verbose connector, finalize Core/Additionals split
+**Timestamp:** 2026-01-21
+**Version:** v1.4
+
+**Changes Made:**
+
+1. **Removed Verbose Connector Entirely:**
+   - Deleted: `connector/openrouterjsoncached_verbose.php`
+   - Removed from UI dropdown (both partial and modal forms)
+   - Removed verbose_logging UI option divs
+   - Removed verbose JavaScript show/hide logic
+   - Removed from `conf/conf_schema.json` CONNECTORS list
+   - Removed entire `openrouterjsoncached_verbose` section from conf_schema.json
+   - Removed `verbose_logging` field from non-verbose cached connector config
+   - Removed from `lib/core/llm_connector.class.php` else-if block
+
+   **Reason:** The verbose connector never actually worked properly and just added
+   maintenance overhead. All functionality is in the main connector.
+
+2. **Updated Version to v1.4:**
+   - `connector/openrouterjsoncached.php` - VERSION constant
+   - `ui/core/llm_connectors.php` - version display (2 locations)
+   - `CHANGELOG.txt` - release notes
+   - `PACKAGE_CONTENTS.txt` - package documentation
+
+3. **Final Core/Additionals Structure:**
+
+   CORE FILES (5 files):
+   - conf/conf_schema.json
+   - lib/core/llm_connector.class.php
+   - ui/core/llm_connectors.php
+   - connector/openrouterjsoncached.php
+   - connector/openrouterjsoncached_helpers.php
+
+   ADDITIONALS FILES (3 files):
+   - prompts/dialogue_prompt.php (with CHIM_CACHED_FEATURE marker)
+   - lib/data_functions.php
+   - lib/chat_helper_functions.php
+
+**Files Modified:**
+- `connector/openrouterjsoncached.php` - Version to v1.4
+- `ui/core/llm_connectors.php` - Removed verbose options, version to v1.4
+- `conf/conf_schema.json` - Removed verbose connector entries
+- `lib/core/llm_connector.class.php` - Removed verbose instantiation
+- `CHANGELOG.txt` - Updated for v1.4
+- `PACKAGE_CONTENTS.txt` - Updated for v1.4
+
+**Files Deleted:**
+- `connector/openrouterjsoncached_verbose.php`
+
+**Conceptual Goal:**
+Simplify the package by removing the non-functional verbose connector, reducing
+maintenance burden. The Core/Additionals split allows faster recovery after
+HerikaServer updates by only requiring 5 core files to restore basic functionality.
+
+---

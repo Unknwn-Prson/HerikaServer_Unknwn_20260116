@@ -25,6 +25,7 @@ $TEMPLATE_DIALOG=" Write {$GLOBALS["HERIKA_NAME"]}'s next dialogue line should b
 // Morgan|ScriptQueue|Wrestling, you say? Now *that* sounds like a fun way to get acquainted.//Vixi Talax//
 //
 
+// CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT
 // Configurable quality instructions toggle
 // Check connector-specific setting for minimize_quality_prompt (defaults to true/minimized for better advanced model performance)
 $useMinimizedPrompt = true; // Default to minimized (recommended for advanced models like Claude 4.5, GPT-4, etc.)
