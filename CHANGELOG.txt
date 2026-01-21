@@ -1,104 +1,97 @@
-CHIM Cached Connector v1.3.4 - Release Notes
+CHIM Cached Connector v1.3.5 - Release Notes
 ============================================
-Release Date: 2026-01-16
+Release Date: 2026-01-21
 Compatible with: CHIM 2.0.3
 
 OVERVIEW
 --------
-v1.3.4 fixes an issue where asterisks, dashes, and other punctuation were
-being stripped from the start of sentences when the LLM didn't include a
-space after the sentence-ending period.
+v1.3.5 restructures the package into CORE and ADDITIONALS for easier
+maintenance when HerikaServer updates. The UI now conditionally shows
+features based on which files are installed.
 
-BUG FIX: ASTERISK/DASH STRIPPING
----------------------------------
-This release fixes a regression where action/narration markers were being
-consumed by the sentence splitting regex.
+KEY CHANGES
+-----------
 
-CHANGES FROM v1.3.3
--------------------
+1. CORE/ADDITIONALS SPLIT
 
-1. FIXED PUNCTUATION STRIPPING IN SENTENCE SPLITTING
+   Package now clearly separated into:
 
-   **Problem:**
-   Asterisks and dashes at the start of sentences were being stripped when
-   there was no space between the period and the punctuation:
+   CORE FILES (6 files - minimum required):
+   - conf/conf_schema.json
+   - lib/core/llm_connector.class.php
+   - ui/core/llm_connectors.php
+   - connector/openrouterjsoncached.php
+   - connector/openrouterjsoncached_helpers.php
+   - connector/openrouterjsoncached_verbose.php
 
-   - Input: `Hello there.* rises from chair *.`
-   - Before: Sentence 2 was `rises from chair *.` (asterisk missing!)
-   - After: Sentence 2 is `* rises from chair *.` (asterisk preserved)
+   ADDITIONALS FILES (3 files - enhanced features):
+   - prompts/dialogue_prompt.php
+   - lib/data_functions.php
+   - lib/chat_helper_functions.php
 
-   **Why It Was Inconsistent:**
-   The issue only occurred when the LLM omitted the space after the period:
-   - `Hello. * rises...` → asterisk preserved (space before asterisk)
-   - `Hello.* rises...` → asterisk consumed (no space)
+2. CONDITIONAL UI TOGGLE
 
-   **Root Cause:**
-   The regex `[\p{P}]?` in `split_at_end_of_sentence()` was consuming ANY
-   Unicode punctuation character immediately after sentence-ending marks.
+   The "Minimize Quality Instructions" toggle is now conditionally displayed:
+   - Shows only when prompts/dialogue_prompt.php contains the marker
+     "CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT"
+   - Hidden if vanilla dialogue_prompt.php is present
+   - Prevents confusing UI options that do nothing
 
-   **Solution:**
-   Changed from consuming all punctuation to explicitly excluding problematic
-   characters while still consuming closing quotes and brackets:
+3. REMOVED ui/events-memories.php
 
-   Old: `[\p{P}]?` (any punctuation)
-   New: `[^\p{L}\p{N}\s\*\-\#\@\(\[\{]?` (exclude letters, numbers, whitespace,
-        asterisks, dashes, hashes, at-signs, opening brackets)
-
-2. CHARACTERS NOW PRESERVED
-
-   The following are no longer stripped from sentence starts:
-   - `*` - Asterisks (action/narration markers)
-   - `-` - Dashes (pause indicators)
-   - `#` - Hashes (tags)
-   - `@` - At signs (mentions)
-   - `(` `[` `{` - Opening brackets
-
-3. CHARACTERS STILL CONSUMED (CORRECT BEHAVIOR)
-
-   These are still consumed after sentence-ending punctuation:
-   - `"` `'` - Closing quotes
-   - `)` `]` `}` - Closing brackets
-   - Combined punctuation like `?!`
+   This file has been removed from the package:
+   - Its change was backwards-compatible (handles array content format)
+   - Not strictly required for cached connector functionality
+   - Reduces files to maintain
 
 TECHNICAL DETAILS
 -----------------
 
 Modified Files:
-- lib/chat_helper_functions.php
-  * Fixed regex in split_at_end_of_sentence() (lines 290-295)
-  * Updated commented code in split_sentences_stream() for consistency
+- ui/core/llm_connectors.php
+  * Added conditional check for minimize_quality_prompt toggle
+  * Uses file content detection (strpos for marker comment)
+  * Updated version to v1.3.5
+
+- prompts/dialogue_prompt.php
+  * Added marker comment: "CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT"
+  * No functional changes
 
 - connector/openrouterjsoncached.php
-  * Updated VERSION to v1.3.4 (line 12)
+  * Updated VERSION to v1.3.5 (line 12)
 
 - connector/openrouterjsoncached_verbose.php
-  * Updated VERSION to v1.3.4 (line 13)
+  * Updated VERSION to v1.3.5 (line 13)
 
-- ui/core/llm_connectors.php
-  * Updated version display to v1.3.4 (lines 410, 1443)
+Removed Files:
+- ui/events-memories.php (no longer in package)
 
-- CLAUDE_changelog.md
-  * Added Entry 10 documenting this fix
-  * Added "Versioning and Documentation Requirements" section
+INSTALLATION SCENARIOS
+----------------------
 
-TEST RESULTS
-------------
+Scenario 1: Full Installation (Recommended)
+- Install all CORE + ADDITIONALS files
+- All features available
 
-| Input                     | v1.3.3 (Before)        | v1.3.4 (After)          |
-|---------------------------|------------------------|-------------------------|
-| `Hello.* rises *`         | `["Hello.","rises *"]` | `["Hello.","* rises *"]`|
-| `Hello.- pauses -`        | `["Hello.","pauses -"]`| `["Hello.","- pauses -"]`|
-| `Hello.# tagged`          | `["Hello.","tagged"]`  | `["Hello.","# tagged"]` |
-| `She said "Hi." Then`     | `["She said \"Hi.","Then"]` | Same (correct) |
-| `(Hello.) Next`           | `["(Hello.","Next"]`   | Same (correct)          |
+Scenario 2: Core Only (Quick Recovery After HerikaServer Update)
+- Install only CORE files (6 files)
+- Connector works with main features
+- "Minimize Quality" toggle hidden
+- Simple format sentences batch slightly
+- Asterisk stripping bug present
+
+Scenario 3: Staged Update
+1. Install CORE files to restore connector
+2. Install ADDITIONALS when time permits
+3. UI automatically shows features as they're installed
 
 UPGRADE NOTES
 -------------
 
-Users upgrading from v1.3.3:
-- Action/narration markers will now be preserved
-- No configuration changes needed
-- All other behavior unchanged
+Users upgrading from v1.3.4:
+- All previous functionality preserved
+- Package is now split but can be installed together as before
+- events-memories.php no longer overwritten
 
 Users upgrading from earlier versions:
 - All previous improvements included
@@ -106,6 +99,10 @@ Users upgrading from earlier versions:
 
 PREVIOUS RELEASES
 -----------------
+
+v1.3.4 (2026-01-16):
+- Fixed asterisk/dash stripping in sentence splitting
+- Preserved action markers like `* rises from chair *`
 
 v1.3.3 (2025-11-16):
 - Removed MINIMUM_SENTENCE_SIZE bottleneck for simple format
@@ -130,5 +127,5 @@ Works with CHIM 2.0.3
 Backward compatible with all v1.3.x configurations
 No breaking changes
 
-For complete feature list: INSTALLATION_INSTRUCTIONS.txt
+For complete feature list: PACKAGE_CONTENTS.txt
 For development history: CLAUDE_changelog.md

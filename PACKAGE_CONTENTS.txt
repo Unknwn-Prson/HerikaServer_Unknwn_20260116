@@ -1,20 +1,41 @@
-CHIM Cached Connector v1.3.4 - Package Contents
+CHIM Cached Connector v1.3.5 - Package Contents
 ===============================================
 
-This package contains all files needed to install or upgrade the
-CHIM Cached Connector with advanced caching, thinking/reasoning,
-flexible quality instruction control, correct custom instruction
-placement, true sentence-by-sentence streaming for simple format,
-and fixed asterisk/dash preservation in sentence splitting.
+This package is split into CORE and ADDITIONALS for easier maintenance
+when HerikaServer updates. The CORE files are the minimum required to
+run the cached connector. ADDITIONALS provide enhanced features.
+
+PACKAGE STRUCTURE
+-----------------
+
+CORE FILES (Required - Minimum for connector to function):
+- conf/conf_schema.json          - Connector registration
+- lib/core/llm_connector.class.php - Connector instantiation
+- ui/core/llm_connectors.php     - Configuration UI
+- connector/openrouterjsoncached.php - Main connector
+- connector/openrouterjsoncached_helpers.php - Helper functions
+- connector/openrouterjsoncached_verbose.php - Verbose variant
+
+ADDITIONALS FILES (Optional - Enhanced features):
+- prompts/dialogue_prompt.php    - Minimize Quality Instructions feature
+- lib/data_functions.php         - Immediate sentence streaming (simple format)
+- lib/chat_helper_functions.php  - Asterisk/dash preservation fix
+
+DOCUMENTATION:
+- CHANGELOG.txt
+- CLAUDE_changelog.md
+- PACKAGE_CONTENTS.txt (this file)
+- connector/OPENROUTERJSONCACHED_README.md
 
 DIRECTORY STRUCTURE
 -------------------
 
-chim_v1.3.4_package/
+chim_v1.3.5_package/
 ├── CHANGELOG.txt
-├── INSTALLATION_INSTRUCTIONS.txt
 ├── PACKAGE_CONTENTS.txt (this file)
 ├── CLAUDE_changelog.md
+│
+├── [CORE]
 ├── conf/
 │   └── conf_schema.json
 ├── connector/
@@ -23,240 +44,138 @@ chim_v1.3.4_package/
 │   ├── openrouterjsoncached_verbose.php
 │   └── OPENROUTERJSONCACHED_README.md
 ├── lib/
-│   ├── chat_helper_functions.php
-│   ├── data_functions.php
 │   └── core/
 │       └── llm_connector.class.php
+├── ui/
+│   └── core/
+│       └── llm_connectors.php
+│
+├── [ADDITIONALS]
 ├── prompts/
 │   └── dialogue_prompt.php
-└── ui/
-    ├── events-memories.php
-    └── core/
-        └── llm_connectors.php
+└── lib/
+    ├── chat_helper_functions.php
+    └── data_functions.php
+
+CORE vs ADDITIONALS EXPLAINED
+-----------------------------
+
+CORE FILES enable:
+- Connector appears in LLM connector dropdown
+- Provider caching (Anthropic, OpenAI, Gemini)
+- Response format selection (JSON / Simple)
+- Thinking/Reasoning toggle
+- Custom system/last instructions
+- All UI settings save and load correctly
+
+ADDITIONALS enable:
+- Minimize Quality Instructions toggle (hidden if not installed)
+- Immediate sentence streaming for simple format
+- Asterisk/dash preservation in sentence splitting (bug fix)
+
+CONDITIONAL UI BEHAVIOR
+-----------------------
+
+The "Minimize Quality Instructions" toggle in the UI is CONDITIONALLY
+displayed based on whether the additionals are installed:
+
+- If prompts/dialogue_prompt.php contains the marker comment
+  "CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT", the toggle shows
+- If vanilla dialogue_prompt.php is present, the toggle is hidden
+- This prevents UI options that do nothing from confusing users
+
+INSTALLATION SCENARIOS
+----------------------
+
+Scenario 1: Full Installation (Recommended)
+- Install all CORE + ADDITIONALS files
+- All features available
+
+Scenario 2: Core Only (Quick HerikaServer Update Recovery)
+- Install only CORE files
+- Connector works with all main features
+- "Minimize Quality" toggle hidden (feature not available)
+- Simple format sentences batch slightly (75-char minimum)
+- Asterisk stripping bug present (cosmetic issue)
+
+Scenario 3: Staged Update After HerikaServer Update
+1. First: Install CORE files to restore connector functionality
+2. Later: Install ADDITIONALS when time permits
+3. UI automatically shows/hides features based on what's installed
 
 FILE DESCRIPTIONS
 -----------------
 
-Documentation Files:
-- CHANGELOG.txt
-  Release notes for v1.3.4, changes from v1.3.3
-  Key focus: Asterisk/dash preservation fix
+CORE Files:
 
-- INSTALLATION_INSTRUCTIONS.txt
-  Complete installation and configuration guide
-  Updated for v1.3.4
-
-- PACKAGE_CONTENTS.txt
-  This file - listing of all package contents
-
-- CLAUDE_changelog.md
-  Complete development history and audit trail
-  Includes Entry 10 for v1.3.4 asterisk fix
-  Now includes versioning requirements documentation
-
-Configuration Files:
 - conf/conf_schema.json
-  Configuration schema for CHIM settings
-  Defines available connector options
+  Registers the cached connector options in CHIM's configuration system
 
-Connector Core Files:
-- connector/openrouterjsoncached.php
-  Main connector implementation (v1.3.4)
-  Handles API communication, caching, thinking, quality control
+- lib/core/llm_connector.class.php
+  Adds connector instantiation (else-if branches for cached connectors)
+
+- ui/core/llm_connectors.php (v1.3.5)
+  Configuration UI with conditional "Minimize Quality" toggle
+  Shows toggle only when additionals are installed
+
+- connector/openrouterjsoncached.php (v1.3.5)
+  Main connector: API communication, caching, thinking, streaming
 
 - connector/openrouterjsoncached_helpers.php
-  Helper functions for connector
-  Format building, response parsing
+  Format building, simple format parsing, sentence splitting
 
-- connector/openrouterjsoncached_verbose.php
-  Verbose/debug version of connector (v1.3.4)
-  Additional logging and diagnostics
+- connector/openrouterjsoncached_verbose.php (v1.3.5)
+  Verbose variant with additional logging
 
-- connector/OPENROUTERJSONCACHED_README.md
-  Connector-specific documentation
-  Technical details and API reference
+ADDITIONALS Files:
 
-Library Files:
-- lib/core/llm_connector.class.php
-  Core LLM connector class
-  Base functionality for all connectors
-
-- lib/chat_helper_functions.php
-  Helper functions for chat processing (v1.3.4)
-  FIXED: Sentence splitting regex now preserves asterisks/dashes
-  Message formatting, context handling
+- prompts/dialogue_prompt.php
+  Contains "CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT" marker
+  Enables shorter prompts for advanced models (token savings)
 
 - lib/data_functions.php
-  Data processing and manipulation functions (v1.3.3)
-  Conditional sentence processing logic for streaming
-  Database operations, data transformation
+  Bypasses 75-char MINIMUM_SENTENCE_SIZE for simple format
+  Enables immediate sentence streaming
 
-Prompt Files:
-- prompts/dialogue_prompt.php
-  Dialogue prompt templates
-  Quality instruction templates
+- lib/chat_helper_functions.php
+  Fixed regex preserves asterisks, dashes, hashes, at-signs
+  Benefits ALL connectors, not just cached
 
-UI Files:
-- ui/core/llm_connectors.php
-  Connector configuration interface (v1.3.4)
-  Settings forms, validation
+CHANGES FROM v1.3.4
+-------------------
 
-- ui/events-memories.php
-  Events and memories interface
-  Context management UI
-
-FILE SIZES (Approximate)
--------------------------
-
-Total Package Size: ~800 KB
-
-Largest Files:
-- ui/core/llm_connectors.php: ~150 KB
-- lib/data_functions.php: ~182 KB
-- conf/conf_schema.json: ~87 KB
-- connector/openrouterjsoncached_verbose.php: ~94 KB
-- connector/openrouterjsoncached.php: ~73 KB
-- lib/chat_helper_functions.php: ~70 KB
-- ui/events-memories.php: ~59 KB
-
-INSTALLATION ORDER
-------------------
-
-Files should be installed in this order for best results:
-
-1. Configuration files (conf/)
-2. Library files (lib/ and lib/core/)
-3. Connector files (connector/)
-4. Prompt files (prompts/)
-5. UI files (ui/ and ui/core/)
-6. Clear cache files (*.tmp)
-
-See INSTALLATION_INSTRUCTIONS.txt for detailed steps.
+- REMOVED: ui/events-memories.php (backwards-compatible, not required)
+- ADDED: Conditional "Minimize Quality" toggle visibility
+- ADDED: Marker comment in dialogue_prompt.php for feature detection
+- RESTRUCTURED: Package now clearly split into CORE and ADDITIONALS
+- Updated version to v1.3.5
 
 VERSION COMPATIBILITY
 ---------------------
 
-All files in this package are version-matched for v1.3.4:
-
-- connector/openrouterjsoncached.php: v1.3.4
-- connector/openrouterjsoncached_verbose.php: v1.3.4
-- lib/chat_helper_functions.php: v1.3.4 (sentence splitting fix)
-- lib/data_functions.php: v1.3.3 (streaming logic)
-- ui/core/llm_connectors.php: v1.3.4 display
-- All other files: Compatible with v1.3.4
-
-CHANGES FROM v1.3.3 PACKAGE
-----------------------------
-
-Modified Files:
-- lib/chat_helper_functions.php
-  * Fixed regex in split_at_end_of_sentence() (lines 290-295)
-  * Asterisks, dashes, hashes, at-signs no longer stripped
-  * Updated commented code in split_sentences_stream()
-
+v1.3.5 files:
 - connector/openrouterjsoncached.php
-  * Updated version to v1.3.4 (line 12)
-
 - connector/openrouterjsoncached_verbose.php
-  * Updated version to v1.3.4 (line 13)
-
 - ui/core/llm_connectors.php
-  * Updated version display to v1.3.4 (lines 410, 1443)
+- prompts/dialogue_prompt.php (marker added)
 
-- CHANGELOG.txt
-  * Updated for v1.3.4 changes
-  * Detailed asterisk fix documentation
-
-- CLAUDE_changelog.md
-  * Added Entry 10 for asterisk fix
-  * Added "Versioning and Documentation Requirements" section
-
-- PACKAGE_CONTENTS.txt
-  * This file updated for v1.3.4
-
-Unchanged Files (same as v1.3.3):
-- connector/openrouterjsoncached_helpers.php
-- connector/OPENROUTERJSONCACHED_README.md
+Unchanged from v1.3.4:
+- lib/chat_helper_functions.php (asterisk fix)
+- lib/data_functions.php (streaming logic)
 - lib/core/llm_connector.class.php
-- lib/data_functions.php
-- prompts/dialogue_prompt.php
-- ui/events-memories.php
 - conf/conf_schema.json
-- INSTALLATION_INSTRUCTIONS.txt
+- connector/openrouterjsoncached_helpers.php
 
-UPGRADE PATH
-------------
+QUICK REFERENCE
+---------------
 
-From v1.3.3:
-- Only 1 code file changed (lib/chat_helper_functions.php)
-- Can do minimal upgrade of just that file
-- Recommended: Full package install for completeness
-- IMPORTANT: Clear cache files after upgrade
+After HerikaServer update, to restore connector:
+1. Copy CORE files (6 files)
+2. Test - connector should work
+3. Copy ADDITIONALS files (3 files) when ready
+4. "Minimize Quality" toggle appears automatically
 
-From v1.3.2:
-- Includes v1.3.3 streaming performance improvement
-- Plus v1.3.4 asterisk fix
-- Full package installation recommended
-
-From v1.3.1 or earlier:
-- Full package installation required
-- Review all changelog files for accumulated changes
-- Test thoroughly after upgrade
-
-CHECKSUMS
----------
-
-For file integrity verification, check file sizes:
-- If any file is significantly different in size, re-extract
-- Verify connector version in openrouterjsoncached.php line 12
-- Should show: v1.3.4 for CHIM 2.0.3 | 2026/01/16
-- Verify lib/chat_helper_functions.php has fixed regex (lines 290-295)
-
-KEY FEATURES IN v1.3.4
-----------------------
-
-* FIXED ASTERISK/DASH STRIPPING (NEW!)
-  - Action markers like "* rises *" now preserved
-  - Dashes, hashes, at-signs also preserved
-  - Closing quotes/brackets still handled correctly
-
-* TRUE SENTENCE-BY-SENTENCE STREAMING (from v1.3.3)
-  - Simple format sentences sent immediately as generated
-  - No 75-character accumulation delay
-  - Significantly improved perceived responsiveness
-  - JSON format unchanged (still uses proper fragment accumulation)
-
-* Fixed custom_system_instruction placement (from v1.3.2)
-  - Now in system prompt before dialogue history
-  - Properly influences entire conversation
-
-* Conditional "Provide variety" filtering (from v1.3.1)
-  - Controlled by minimize_quality_prompt setting
-  - Default: enabled (recommended for advanced models)
-
-* Advanced caching support (from v1.2.x)
-  - Anthropic, OpenAI, Gemini cache support
-  - Dialogue history caching
-  - Significant token savings
-
-* Thinking/Reasoning support (from v1.2.x)
-  - Works with o1, Claude, Gemini 2.0
-  - Configurable effort levels
-  - Token budget control
-
-* Flexible response formats (from v1.2.x)
-  - JSON: Structured output
-  - Simple: Natural language with tags (with streaming!)
-
-SUPPORT
--------
-
-For issues or questions:
-- Check INSTALLATION_INSTRUCTIONS.txt troubleshooting section
-- Review CHANGELOG.txt for known issues
-- Consult CLAUDE_changelog.md for development history
-
-Package Date: 2026-01-16
+Package Date: 2026-01-21
 CHIM Version: 2.0.3
-Connector Version: 1.3.4
-Key Feature: Fixed asterisk/dash stripping in sentence splitting
+Connector Version: 1.3.5
+Key Feature: Core/Additionals split for easier maintenance

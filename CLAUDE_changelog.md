@@ -557,3 +557,105 @@ Preserve action/narration markers (asterisks, dashes) and other semantic punctua
 
 ---
 
+
+## Session: 2026-01-21 - Core/Additionals Split
+
+### Entry 11: Package restructure - Core/Additionals split with conditional UI
+**Timestamp:** 2026-01-21
+**Version:** v1.3.5
+
+**Problem Identified:**
+When HerikaServer updates, the cached connector requires updating multiple files which is time-consuming.
+The user requested a way to split the package into "core" files (minimum required) and "additionals"
+(enhanced features) to allow faster recovery after HerikaServer updates.
+
+Additionally, the "Minimize Quality Instructions" toggle was showing in the UI even when the
+feature wasn't installed (prompts/dialogue_prompt.php not overwritten), causing confusion.
+
+**Solution:**
+
+1. **Package Split:**
+   
+   CORE FILES (6 files - minimum required):
+   - conf/conf_schema.json - Connector registration
+   - lib/core/llm_connector.class.php - Connector instantiation
+   - ui/core/llm_connectors.php - Configuration UI
+   - connector/openrouterjsoncached.php - Main connector
+   - connector/openrouterjsoncached_helpers.php - Helper functions
+   - connector/openrouterjsoncached_verbose.php - Verbose variant
+
+   ADDITIONALS FILES (3 files - enhanced features):
+   - prompts/dialogue_prompt.php - Minimize Quality Instructions feature
+   - lib/data_functions.php - Immediate sentence streaming
+   - lib/chat_helper_functions.php - Asterisk/dash preservation fix
+
+2. **Conditional UI Toggle:**
+   
+   Added marker comment to prompts/dialogue_prompt.php:
+   ```php
+   // CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT
+   ```
+   
+   Added conditional check in ui/core/llm_connectors.php (two locations):
+   ```php
+   <?php if (@strpos(file_get_contents(__DIR__.'/../../prompts/dialogue_prompt.php'), 'CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT') !== false): ?>
+       <!-- minimize_quality_prompt checkbox here -->
+   <?php endif; ?>
+   ```
+   
+   This hides the toggle when the additionals aren't installed, preventing UI confusion.
+
+3. **Removed ui/events-memories.php:**
+   
+   This file was removed from the package because:
+   - Its change (handling array content format) is backwards-compatible
+   - Not strictly required for cached connector functionality
+   - Reduces files to maintain
+
+**Files Modified:**
+- `prompts/dialogue_prompt.php` - Added marker comment (line 28)
+- `ui/core/llm_connectors.php` - Added conditional checks (lines ~456-464, ~1491-1499), updated version
+- `connector/openrouterjsoncached.php` - Updated VERSION to v1.3.5
+- `connector/openrouterjsoncached_verbose.php` - Updated VERSION to v1.3.5
+- `CHANGELOG.txt` - Updated for v1.3.5
+- `PACKAGE_CONTENTS.txt` - Complete rewrite for Core/Additionals structure
+
+**Files Removed from Package:**
+- `ui/events-memories.php` - No longer included
+
+**Installation Scenarios:**
+
+Scenario 1: Full Installation (Recommended)
+- Install all CORE + ADDITIONALS files
+- All features available
+
+Scenario 2: Core Only (Quick Recovery)
+- Install only CORE files (6 files)
+- Connector works with main features
+- "Minimize Quality" toggle hidden (feature not available)
+- Simple format sentences batch slightly (75-char minimum)
+- Asterisk stripping bug present (cosmetic)
+
+Scenario 3: Staged Update
+1. Install CORE files to restore connector functionality
+2. Install ADDITIONALS when time permits
+3. UI automatically shows features as they're installed
+
+**Why File Content Check Instead of Marker File:**
+The user noted that marker files could be left behind from previous installations,
+causing stale feature detection. By checking for a marker comment INSIDE the
+dialogue_prompt.php file itself, the detection is always accurate - if the file
+is replaced with vanilla, the marker disappears automatically.
+
+**Conceptual Goal:**
+Enable faster recovery after HerikaServer updates by minimizing the number of files
+that MUST be updated. The UI intelligently adapts to show only features that are
+actually available, preventing user confusion.
+
+**Critical Analysis:**
+- Core files are the minimum needed for connector to appear and function
+- Additionals provide enhanced features but connector works without them
+- Conditional UI prevents "dead" toggles that do nothing
+- File content detection is robust against leftover files from old installations
+
+---

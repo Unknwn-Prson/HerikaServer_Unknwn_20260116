@@ -407,7 +407,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                 <!-- Caching Settings (shown only for cached connectors) -->
                 <div id="caching_settings" style="display:none; margin-top:16px; padding:12px; border:1px solid #4a4a4a; border-radius:8px; background:#1a1a1a;">
                     <div style="font-weight:600; color:#e9efff; margin-bottom:4px;">🔄 Caching Settings</div>
-                    <div style="font-size:11px; color:#888; margin-bottom:12px;">OpenRouter Cache Connector v1.3.4 for CHIM 2.0.3 | 2026/01/16</div>
+                    <div style="font-size:11px; color:#888; margin-bottom:12px;">OpenRouter Cache Connector v1.3.5 for CHIM 2.0.3 | 2026/01/21</div>
 
                     <label for='provider_caching'>Provider Caching Type</label><br>
                     <select name="metadata[provider_caching]" id="provider_caching">
@@ -453,6 +453,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                         </label>
                     </div>
 
+                    <?php if (@strpos(file_get_contents(__DIR__.'/../../prompts/dialogue_prompt.php'), 'CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT') !== false): ?>
                     <div style="margin-top:12px;">
                         <label class="label-with-toggle"><span class='tip-label' data-tip='Recommended ON for advanced models (Claude 4.5, GPT-4, Gemini 2.0). Uses minimal quality instructions. Turn OFF for older/smaller models that benefit from explicit guidance.'>Minimize Quality Instructions (Recommended)</span>
                             <input type="hidden" name="metadata[minimize_quality_prompt]" value="0">
@@ -460,6 +461,7 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                             <span class="toggle-text">On</span>
                         </label>
                     </div>
+                    <?php endif; ?>
 
                     <div style="margin-top:12px;">
                         <label for='max_dialogue_cache_context_size'><span class='tip-label' data-tip='Maximum number of dialogue entries to cache in temp files. Higher = more context but larger cache files. Recommended: 93'>Max Dialogue Cache Context Size</span></label><br>
@@ -1440,7 +1442,7 @@ $effortLevel = $metadataArr["effort_level"] ?? '';
             <!-- Caching Settings (shown only for cached connectors) - MAIN EDITOR -->
             <div id="caching_settings_main" style="display:none; margin-top:16px; padding:12px; border:1px solid #4a4a4a; border-radius:8px; background:#1a1a1a;">
                 <div style="font-weight:600; color:#e9efff; margin-bottom:4px;">🔄 Caching Settings</div>
-                <div style="font-size:11px; color:#888; margin-bottom:12px;">OpenRouter Cache Connector v1.3.4 for CHIM 2.0.3 | 2026/01/16</div>
+                <div style="font-size:11px; color:#888; margin-bottom:12px;">OpenRouter Cache Connector v1.3.5 for CHIM 2.0.3 | 2026/01/21</div>
 
                 <label for='provider_caching_main'>Provider Caching Type</label><br>
                 <select name="metadata[provider_caching]" id="provider_caching_main">
@@ -1486,6 +1488,7 @@ $effortLevel = $metadataArr["effort_level"] ?? '';
                     </label>
                 </div>
 
+                <?php if (@strpos(file_get_contents(__DIR__.'/../../prompts/dialogue_prompt.php'), 'CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT') !== false): ?>
                 <div style="margin-top:12px;">
                     <label class="label-with-toggle"><span class='tip-label' data-tip='Recommended ON for advanced models (Claude 4.5, GPT-4, Gemini 2.0). Uses minimal quality instructions. Turn OFF for older/smaller models that benefit from explicit guidance.'>Minimize Quality Instructions (Recommended)</span>
                         <input type="hidden" name="metadata[minimize_quality_prompt]" value="0">
@@ -1493,6 +1496,7 @@ $effortLevel = $metadataArr["effort_level"] ?? '';
                         <span class="toggle-text">On</span>
                     </label>
                 </div>
+                <?php endif; ?>
 
                 <div style="margin-top:12px;">
                     <label for='max_dialogue_cache_context_size_main'><span class='tip-label' data-tip='Maximum number of dialogue entries to cache in temp files. Higher = more context but larger cache files. Recommended: 93'>Max Dialogue Cache Context Size</span></label><br>
