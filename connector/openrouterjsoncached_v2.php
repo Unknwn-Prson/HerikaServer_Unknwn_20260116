@@ -36,6 +36,8 @@ class openrouterjsoncached
     private $_providers2ignore;
     private $_provider_max_price;
     private $_url;
+    // Web search properties (CHIM 2.2 feature - NOT YET IMPLEMENTED in cached connector)
+    // TODO: Port web search detection/handling from openrouterjson.php if needed
     private $_websearch=false;
     private $_websearch_text="";
     private $_websearch_index=0;
@@ -373,6 +375,8 @@ class openrouterjsoncached
             : 'accumulate';
 
         // Cache invalidation mode (NEW in v2)
+        // NOTE: 'sync_updates' mode is not yet fully implemented - falls back to 'time_based'
+        // TODO: Implement sync logic to invalidate cache when dynamic profile/middle-term memory updates
         $this->_cacheInvalidationMode = isset($GLOBALS["CONNECTOR"][$this->name]["cache_invalidation_mode"])
             ? $GLOBALS["CONNECTOR"][$this->name]["cache_invalidation_mode"]
             : 'time_based';
@@ -566,8 +570,8 @@ class openrouterjsoncached
             $contentTextToSend = array_slice($contentTextToSend, 4);
         }
 
-        // Remove instruction to add back later
-        $instruction = array_pop($contentTextToSend);
+        // Remove instruction to add back later (with null safety)
+        $instruction = !empty($contentTextToSend) ? array_pop($contentTextToSend) : ['type' => 'text', 'text' => ''];
 
         // Manage cached event list (excludes memory items in 'fresh' mode)
         $completeEventList = manageCharacterEventList($contentTextToSend, $cacheCombinedDialogueFile, $max_dialogue_cache_size);
@@ -1316,7 +1320,10 @@ class openrouterjsoncached
                     }
                 }
                 // Strip any reasoning tokens from final message
-                return stripReasoningTokens($tempJson['message']);
+                if (function_exists('stripReasoningTokens')) {
+                    return stripReasoningTokens($tempJson['message']);
+                }
+                return $tempJson['message'];
             }
         } else {
             // SIMPLE FORMAT PARSER
