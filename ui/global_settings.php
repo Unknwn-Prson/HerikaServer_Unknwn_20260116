@@ -389,7 +389,12 @@ if ($hasForeign) {
                             $table = $parts[1];
                             $idCol = $parts[2];
                             $labelCol = $parts[3];
-                            $rows = $db->fetchAll("select {$idCol},{$labelCol} from {$table}");
+                            // Also fetch driver column for filtering cached connector from incompatible types
+                            if ($table === 'core_llm_connector') {
+                                $rows = $db->fetchAll("select {$idCol},{$labelCol},driver from {$table}");
+                            } else {
+                                $rows = $db->fetchAll("select {$idCol},{$labelCol} from {$table}");
+                            }
                             $foreignOptions[$f['name']] = $rows;
                         }
                     }
@@ -752,10 +757,23 @@ function current_value(string $flatName, array $currentConf) {
                                             <?php endforeach; ?>
                                         </select>
                                     <?php elseif (strpos($ftype, 'foreign:') === 0): ?>
-                                        <?php $rows = $foreignOptions[$fname] ?? []; ?>
+                                        <?php
+                                        $rows = $foreignOptions[$fname] ?? [];
+                                        // Filter out cached connector for CORE_CONNECTOR types that use fast_request (non-streaming)
+                                        // Cached connector only supports streaming, not fast_request
+                                        $incompatibleWithCached = ['CORE_CONNECTOR_PLAYER', 'CORE_CONNECTOR_SUMMARY', 'CORE_CONNECTOR_MEDIUMTERM', 'CORE_CONNECTOR_PROFILES'];
+                                        $filterCached = in_array($fname, $incompatibleWithCached);
+                                        ?>
                                         <select name="<?php echo htmlspecialchars($fname); ?>" <?php echo $isReadonly ? 'disabled' : ''; ?>>
                                             <?php foreach ($rows as $row): ?>
-                                                <?php $idCol = explode(':', $ftype)[2]; $labelCol = explode(':', $ftype)[3]; ?>
+                                                <?php
+                                                $idCol = explode(':', $ftype)[2];
+                                                $labelCol = explode(':', $ftype)[3];
+                                                // Skip cached connector for incompatible CORE_CONNECTOR types
+                                                if ($filterCached && isset($row['driver']) && $row['driver'] === 'openrouterjsoncached') {
+                                                    continue;
+                                                }
+                                                ?>
                                                 <option value="<?php echo htmlspecialchars($row[$idCol]); ?>" <?php echo ((string)$current===(string)$row[$idCol]?'selected':''); ?>><?php echo htmlspecialchars($row[$labelCol]); ?></option>
                                             <?php endforeach; ?>
                                         </select>

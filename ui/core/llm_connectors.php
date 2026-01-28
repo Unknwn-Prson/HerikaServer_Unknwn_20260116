@@ -460,6 +460,22 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                     </div>
 
                     <div style="margin-top:12px;">
+                        <label for='memory_mode'><span class='tip-label' data-tip='How to handle memory injections. Accumulate = deduplicate memories in cache (efficient). Fresh = memories placed at end, re-sent each request (like regular connector).'>Memory Mode</span></label><br>
+                        <select name='metadata[memory_mode]' id='memory_mode'>
+                            <option value="accumulate" <?= ($metadata['memory_mode'] ?? 'accumulate') === 'accumulate' ? 'selected' : '' ?>>Accumulate (deduplicate)</option>
+                            <option value="fresh" <?= ($metadata['memory_mode'] ?? '') === 'fresh' ? 'selected' : '' ?>>Fresh (like regular connector)</option>
+                        </select>
+                    </div>
+
+                    <div style="margin-top:12px;">
+                        <label for='cache_invalidation_mode'><span class='tip-label' data-tip='When to invalidate dialogue cache. Time-based = expires after 1h inactivity. Sync-updates = also invalidate on profile/memory updates (experimental).'>Cache Invalidation</span></label><br>
+                        <select name='metadata[cache_invalidation_mode]' id='cache_invalidation_mode'>
+                            <option value="time_based" <?= ($metadata['cache_invalidation_mode'] ?? 'time_based') === 'time_based' ? 'selected' : '' ?>>Time-based (1h inactivity)</option>
+                            <option value="sync_updates" <?= ($metadata['cache_invalidation_mode'] ?? '') === 'sync_updates' ? 'selected' : '' ?>>Sync with updates (experimental)</option>
+                        </select>
+                    </div>
+
+                    <div style="margin-top:12px;">
                         <label for='custom_system_instruction'><span class='tip-label' data-tip='Additional instruction added to the system prompt (after character bio, before dialogue history). Does NOT replace other instructions.'>Custom System Instruction</span></label><br>
                         <textarea name='metadata[custom_system_instruction]' id='custom_system_instruction' rows='3' style='width:100%; box-sizing:border-box;'><?= htmlspecialchars($metadata['custom_system_instruction'] ?? '') ?></textarea>
                     </div>
@@ -1479,6 +1495,22 @@ $effortLevel = $metadataArr["effort_level"] ?? '';
                 <div style="margin-top:12px;">
                     <label for='max_dialogue_cache_context_size_main'><span class='tip-label' data-tip='Maximum number of dialogue entries to cache in temp files. Higher = more context but larger cache files. Recommended: 93'>Max Dialogue Cache Context Size</span></label><br>
                     <input type='number' name='metadata[max_dialogue_cache_context_size]' id='max_dialogue_cache_context_size_main' value='<?= htmlspecialchars($metadata_main['max_dialogue_cache_context_size'] ?? '93') ?>' min='0' step='1'>
+                </div>
+
+                <div style="margin-top:12px;">
+                    <label for='memory_mode_main'><span class='tip-label' data-tip='How to handle memory injections. Accumulate = deduplicate memories in cache (efficient). Fresh = memories placed at end, re-sent each request (like regular connector).'>Memory Mode</span></label><br>
+                    <select name='metadata[memory_mode]' id='memory_mode_main'>
+                        <option value="accumulate" <?= ($metadata_main['memory_mode'] ?? 'accumulate') === 'accumulate' ? 'selected' : '' ?>>Accumulate (deduplicate)</option>
+                        <option value="fresh" <?= ($metadata_main['memory_mode'] ?? '') === 'fresh' ? 'selected' : '' ?>>Fresh (like regular connector)</option>
+                    </select>
+                </div>
+
+                <div style="margin-top:12px;">
+                    <label for='cache_invalidation_mode_main'><span class='tip-label' data-tip='When to invalidate dialogue cache. Time-based = expires after 1h inactivity. Sync-updates = also invalidate on profile/memory updates (experimental).'>Cache Invalidation</span></label><br>
+                    <select name='metadata[cache_invalidation_mode]' id='cache_invalidation_mode_main'>
+                        <option value="time_based" <?= ($metadata_main['cache_invalidation_mode'] ?? 'time_based') === 'time_based' ? 'selected' : '' ?>>Time-based (1h inactivity)</option>
+                        <option value="sync_updates" <?= ($metadata_main['cache_invalidation_mode'] ?? '') === 'sync_updates' ? 'selected' : '' ?>>Sync with updates (experimental)</option>
+                    </select>
                 </div>
 
                 <div style="margin-top:12px;">

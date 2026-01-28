@@ -231,9 +231,14 @@ class LLMConnector {
             $GLOBALS["CONNECTOR"]["openrouterjsoncached"]["top_a"] = $currentConnectorData["top_a"] ?? 0;
             $GLOBALS["CONNECTOR"]["openrouterjsoncached"]["API_KEY"] = $apiKeyData["api_key"];
 
+            // Set defaults for v2 caching settings
+            $GLOBALS["CONNECTOR"]["openrouterjsoncached"]["memory_mode"] = 'accumulate';
+            $GLOBALS["CONNECTOR"]["openrouterjsoncached"]["cache_invalidation_mode"] = 'time_based';
+
             // Decode metadata and extended_data if available
             // Metadata should contain caching-specific settings like:
-            // provider_caching, response_format, include_*, dialogue_cache_uncached_count, etc.
+            // provider_caching, response_format, include_*, dialogue_cache_uncached_count,
+            // memory_mode, cache_invalidation_mode, etc.
             $metadata = json_decode($currentConnectorData['metadata'] ?? '{}', true);
             if (is_array($metadata)) {
                 foreach ($metadata as $key => $value) {
