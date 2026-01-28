@@ -40,7 +40,7 @@ These must be hidden from selection in the UI/schema.
 ## Implementation Steps
 
 ### Step 1: Class Rename and Metadata
-**Status:** Pending
+**Status:** ✅ Complete
 
 Changes:
 - [ ] Rename class from `openrouterjson` to `openrouterjsoncached`
@@ -66,7 +66,7 @@ $this->name="openrouterjsoncached";
 ---
 
 ### Step 2: Add New Properties
-**Status:** Pending
+**Status:** ✅ Complete
 
 Add these properties after `$_lastStreamedObject` (around line 44):
 
@@ -101,7 +101,7 @@ private $_memoryMode; // 'accumulate' or 'fresh'
 ---
 
 ### Step 3: Update Constructor
-**Status:** Pending
+**Status:** ✅ Complete
 
 Changes to constructor:
 - [ ] Change `$this->name` to `"openrouterjsoncached"`
@@ -145,7 +145,7 @@ logMessage("[{$this->name}] OpenRouter Cached Connector v" . self::VERSION . " i
 ---
 
 ### Step 4: Add New Methods
-**Status:** Pending
+**Status:** ✅ Complete
 
 New methods to add:
 
@@ -170,7 +170,7 @@ Detects models that always have reasoning enabled (o1, o3, o4, gpt-5, DeepSeek-R
 ---
 
 ### Step 5: Rewrite open() Method
-**Status:** Pending
+**Status:** ✅ Complete
 
 The monolithic `open()` method must be split into 4 parts:
 
@@ -212,7 +212,7 @@ The monolithic `open()` method must be split into 4 parts:
 ---
 
 ### Step 6: Rewrite process() Method
-**Status:** Pending
+**Status:** ✅ Complete
 
 Changes:
 - Support both Anthropic-native and OpenAI SSE formats
@@ -224,7 +224,7 @@ Changes:
 ---
 
 ### Step 7: Rewrite close() and processActions()
-**Status:** Pending
+**Status:** ✅ Complete
 
 #### close()
 - Remove database audit inserts
@@ -239,7 +239,7 @@ Changes:
 ---
 
 ### Step 8: Remove fast_request()
-**Status:** Pending
+**Status:** ✅ Complete
 
 Remove the entire `fast_request()` method. This connector is streaming-only.
 

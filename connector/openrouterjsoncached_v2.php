@@ -287,660 +287,581 @@ class openrouterjsoncached
         return $b_res;
     }
 
-    private function init_connector($customParms) {
-        $this->_url = (isset($GLOBALS["CONNECTOR"][$this->name]["url"])) ? $GLOBALS["CONNECTOR"][$this->name]["url"] : "";
-        if (strlen($this->_url) < 6)
-            Logger::error("{$this->name} connector - missing url!");
+    // ================================================================================
+    // OPEN METHOD - Split into 4 parts for caching support
+    // Part 1: Configuration and initialization
+    // Part 2: System prompt processing with caching
+    // Part 3: Dialogue history caching and cache control placement
+    // Part 4: Payload construction and API request
+    // ================================================================================
 
-        $this->_remove_cot = (isset($GLOBALS["CONNECTOR"][$this->name]["remove_chain_of_thought"])) ? $GLOBALS["CONNECTOR"][$this->name]["remove_chain_of_thought"] : true;
-        $this->_disable_reasoning = ($GLOBALS["CONNECTOR"][$this->name]["disable_model_reasoning"] ?? true);
+    public function open($contextData, $customParms) {
+        $start_time = microtime(true);
+        require_once(__DIR__ . DIRECTORY_SEPARATOR . ".." . DIRECTORY_SEPARATOR . "functions" . DIRECTORY_SEPARATOR . "json_response.php");
 
-        $default_model = 'meta-llama/llama-3.3-70b-instruct';
+        $herikaName = isset($GLOBALS["HERIKA_NAME"]) ? $GLOBALS["HERIKA_NAME"] : 'default_herika';
+        $n_ctxsize = count($contextData);
 
-        $s_fallback = trim($GLOBALS["CONNECTOR"][$this->name]["fallback_models"] ?? ""); //"google/gemini-2.0-flash-001,google/gemini-2.5-flash-lite,meta-llama/llama-4-scout"
-        if (strlen($s_fallback) > 1)
-            $this->_fallback_models = explode(",",$s_fallback); 
+        logMessage("[{$this->name}:{$herikaName}] OPEN START: Received contextData with {$n_ctxsize} elements.");
 
-        $this->_providers_sort = strtolower(trim($GLOBALS["CONNECTOR"][$this->name]["providers_sort"] ?? ""));
-
-        $s_providers2ignore = trim($GLOBALS["CONNECTOR"][$this->name]["providers_to_ignore"] ?? ""); //"Nebius AI Studio, Together, Infermatic";
-        if (strlen($s_providers2ignore) > 1)
-            $this->_providers2ignore = explode(",", $s_providers2ignore);
-        
-        $s_quantizations = trim($GLOBALS["CONNECTOR"][$this->name]["provider_quantizations"] ?? "");  //'fp8,fp16,bf16,fp32,unknown';
-        if (strlen($s_quantizations) > 1)
-            $this->_provider_quantizations = explode(",", $s_quantizations); 
-
-        $f_max_price_prompt = floatval($GLOBALS["CONNECTOR"][$this->name]["provider_max_price_input"] ?? 0.0); //0.50
-        $f_max_price_completition = floatval($GLOBALS["CONNECTOR"][$this->name]["provider_max_price_output"] ?? 0.0); //2.99
-        if ($f_max_price_completition < 0.001 )
-            $f_max_price_completition = 0.0;
-        if ($f_max_price_prompt < 0.001 )
-            $f_max_price_prompt = 0.0;
-        else {
-            if ($f_max_price_completition < 0.001 )
-                $f_max_price_completition = 9999.0;
-            $this->_provider_max_price = ['prompt' => $f_max_price_prompt, 'completion' => $f_max_price_completition];
+        // Load URL configuration
+        $this->_url = isset($GLOBALS["CONNECTOR"][$this->name]["url"]) ? $GLOBALS["CONNECTOR"][$this->name]["url"] : '';
+        if (empty($this->_url)) {
+            logMessage("{$this->name} connector - missing url!");
+            return null;
         }
 
-        $this->_is_nanogpt_com = (stripos($this->_url, "nano-gpt.com") > 0 ); //https://nano-gpt.com/api/v1/chat/completions
-        if ($this->_is_nanogpt_com) {    
-            $default_model = 'meta-llama/llama-4-scout';
+        // Load basic configuration
+        $MAX_TOKENS = intval(isset($GLOBALS["CONNECTOR"][$this->name]["max_tokens"]) ? $GLOBALS["CONNECTOR"][$this->name]["max_tokens"] : 4096);
+        $this->_model = (isset($GLOBALS["CONNECTOR"][$this->name]["model"])) ? $GLOBALS["CONNECTOR"][$this->name]["model"] : 'anthropic/claude-3-haiku-20240307';
+        $this->_model = isset($customParms["model"]) ? $customParms["model"] : $this->_model;
+
+        // Caching configuration
+        $max_dialogue_cache_size = intval(isset($GLOBALS["CONNECTOR"][$this->name]["max_dialogue_cache_context_size"]) ? $GLOBALS["CONNECTOR"][$this->name]["max_dialogue_cache_context_size"] : $n_ctxsize * 4);
+        $customInstruction = isset($GLOBALS["CONNECTOR"][$this->name]["custom_system_instruction"]) ? $GLOBALS["CONNECTOR"][$this->name]["custom_system_instruction"] : '';
+        $lastCustomInstruction = isset($GLOBALS["CONNECTOR"][$this->name]["custom_last_instruction"]) ? $GLOBALS["CONNECTOR"][$this->name]["custom_last_instruction"] : '';
+
+        // Reasoning/thinking configuration
+        $toggleThinking = isset($GLOBALS["CONNECTOR"][$this->name]["toggle_thinking"]) ? $GLOBALS["CONNECTOR"][$this->name]["toggle_thinking"] : false;
+        $thinkingTokens = isset($GLOBALS["CONNECTOR"][$this->name]["thinking_tokens"]) ? $GLOBALS["CONNECTOR"][$this->name]["thinking_tokens"] : 1000;
+        $effort_level = isset($GLOBALS["CONNECTOR"][$this->name]["effort_level"]) ? $GLOBALS["CONNECTOR"][$this->name]["effort_level"] : "low";
+
+        // Cache provider configuration
+        $this->_provider_caching = isset($GLOBALS["CONNECTOR"][$this->name]["provider_caching"]) ? $GLOBALS["CONNECTOR"][$this->name]["provider_caching"] : "Anthropic";
+        logMessage("provider caching: {$this->_provider_caching}");
+
+        $CONTEXTHISTORY = isset($GLOBALS['CONTEXT_HISTORY']) ? $GLOBALS['CONTEXT_HISTORY'] : 50;
+        logMessage("CONTEXT HISTORY: $CONTEXTHISTORY");
+
+        // Dialogue cache configuration
+        $dialogue_cache_uncached_count = isset($GLOBALS["CONNECTOR"][$this->name]["dialogue_cache_uncached_count"])
+            ? (int)$GLOBALS["CONNECTOR"][$this->name]["dialogue_cache_uncached_count"]
+            : 4;
+
+        // Response format configuration
+        $this->_responseFormat = isset($GLOBALS["CONNECTOR"][$this->name]["response_format"])
+            && in_array($GLOBALS["CONNECTOR"][$this->name]["response_format"], ['json', 'simple'])
+            ? $GLOBALS["CONNECTOR"][$this->name]["response_format"]
+            : 'json';
+
+        // Field inclusion configuration
+        $this->_includeActions = (isset($GLOBALS["FUNCTIONS_ARE_ENABLED"]) && $GLOBALS["FUNCTIONS_ARE_ENABLED"])
+            && (isset($GLOBALS["CONNECTOR"][$this->name]["include_actions_list"])
+                ? (bool)$GLOBALS["CONNECTOR"][$this->name]["include_actions_list"]
+                : true);
+
+        $this->_includeMood = isset($GLOBALS["CONNECTOR"][$this->name]["include_mood_requirement"])
+            ? (bool)$GLOBALS["CONNECTOR"][$this->name]["include_mood_requirement"]
+            : true;
+
+        $this->_includeTarget = isset($GLOBALS["CONNECTOR"][$this->name]["include_target_requirement"])
+            ? (bool)$GLOBALS["CONNECTOR"][$this->name]["include_target_requirement"]
+            : true;
+
+        $this->_includeListener = isset($GLOBALS["CONNECTOR"][$this->name]["include_listener_requirement"])
+            ? (bool)$GLOBALS["CONNECTOR"][$this->name]["include_listener_requirement"]
+            : true;
+
+        // Quality prompt setting (defaults to true for advanced models)
+        $minimizeQualityPrompt = isset($GLOBALS["CONNECTOR"][$this->name]["minimize_quality_prompt"])
+            ? (bool)$GLOBALS["CONNECTOR"][$this->name]["minimize_quality_prompt"]
+            : true;
+
+        // Memory mode configuration (NEW in v2)
+        $this->_memoryMode = isset($GLOBALS["CONNECTOR"][$this->name]["memory_mode"])
+            ? $GLOBALS["CONNECTOR"][$this->name]["memory_mode"]
+            : 'accumulate';
+
+        // Cache invalidation mode (NEW in v2)
+        $this->_cacheInvalidationMode = isset($GLOBALS["CONNECTOR"][$this->name]["cache_invalidation_mode"])
+            ? $GLOBALS["CONNECTOR"][$this->name]["cache_invalidation_mode"]
+            : 'time_based';
+
+        // Enforce dependency: target required if actions enabled
+        if ($this->_includeActions) {
+            $this->_includeTarget = true;
+        }
+
+        logMessage("Response Format Config: format={$this->_responseFormat}, actions={$this->_includeActions}, mood={$this->_includeMood}, target={$this->_includeTarget}, listener={$this->_includeListener}, memoryMode={$this->_memoryMode}");
+
+        // Continue to Part 2...
+        return $this->_openPart2($contextData, $customParms, $herikaName, $MAX_TOKENS, $max_dialogue_cache_size,
+                                  $customInstruction, $lastCustomInstruction, $toggleThinking, $thinkingTokens,
+                                  $effort_level, $CONTEXTHISTORY, $dialogue_cache_uncached_count, $start_time, $minimizeQualityPrompt);
+    }
+
+    // Part 2: System Prompt Processing with Caching
+    private function _openPart2($contextData, $customParms, $herikaName, $MAX_TOKENS, $max_dialogue_cache_size,
+                                 $customInstruction, $lastCustomInstruction, $toggleThinking, $thinkingTokens,
+                                 $effort_level, $CONTEXTHISTORY, $dialogue_cache_uncached_count, $start_time, $minimizeQualityPrompt = true) {
+
+        // Cache file names include response format to separate caches
+        $cacheSystemFile = "system_cache_{$this->_responseFormat}_{$herikaName}.tmp";
+        $cacheCombinedDialogueFile = "combined_dialogue_cache_{$this->_responseFormat}_{$herikaName}.tmp";
+        $cacheControlType = ["type" => "ephemeral", "ttl" => "1h"];
+
+        // Build actions prefix
+        if (isset($GLOBALS["PATCH_PROMPT_ENFORCE_ACTIONS"]) && $GLOBALS["PATCH_PROMPT_ENFORCE_ACTIONS"]) {
+            $prefix = isset($GLOBALS["COMMAND_PROMPT_ENFORCE_ACTIONS"]) ? "{$GLOBALS["COMMAND_PROMPT_ENFORCE_ACTIONS"]}" : "";
+
+            // Filter quality instructions if minimize_quality_prompt is enabled
+            if ($minimizeQualityPrompt && stripos($prefix, 'Provide variety') !== false) {
+                $prefix = "";
+            }
         } else {
-            $this->_is_mistral_ai = (stripos($this->_url, "mistral.ai") > 0 ); //https://api.mistral.ai/v1/chat/completions
-            if ($this->_is_mistral_ai)    
-                $default_model = 'mistral-small-latest';
+            $prefix = "";
         }
 
-        $this->_model = $GLOBALS["CONNECTOR"][$this->name]["model"] ?? $default_model;
-        
-        // We shoud be able to overwrite model.
-        $this->_model = isset($customParms["model"]) ?$customParms["model"] :  $this->_model;
+        // Speech style reinforcement
+        if (isset($GLOBALS["HERIKA_SPEECHSTYLE"]) && !empty($GLOBALS["HERIKA_SPEECHSTYLE"])) {
+            $speechReinforcement = "Use #SpeechStyle.";
+        } else {
+            $speechReinforcement = "";
+        }
 
-        $this->_is_grok = (stripos($this->_model, "grok") > 0 ); 
-        $this->_is_openai = $this->isOpenAIModel($this->_model);
-        
-        $this->_is_reasoning = $GLOBALS["CONNECTOR"][$this->name]["reasoning_model"] ?? false;  
-        if (!$this->_is_reasoning)
-            $this->_is_reasoning = $this->isReasoningModel($this->_model); // check if resoning model, use list of known reasoning models
-        
-        $this->_timeout = intval(($this->_is_reasoning) ? 90 : 30); // reasoning models could think more than 2 minutes
-    }   
-    
-    public function open($contextData, $customParms)
-    {
+        // Zonos TTS support (from CHIM 2.2)
+        $zonosTones = (isset($GLOBALS["TTSFUNCTION"]) && $GLOBALS["TTSFUNCTION"] == "zonos_gradio") ? " (Response tones are mandatory in the response)" : "";
 
-        $this->init_connector($customParms);
+        // Build actions list if enabled
+        $availableActions = "";
+        if ($this->_includeActions && isset($GLOBALS["COMMAND_PROMPT"])) {
+            $availableActions = preg_replace('/\(available targets:[^\n]*/', '', $GLOBALS["COMMAND_PROMPT"]);
+        }
 
-        $MAX_TOKENS=intval((isset($GLOBALS["CONNECTOR"][$this->name]["max_tokens"]) ? $GLOBALS["CONNECTOR"][$this->name]["max_tokens"] : 48));
+        // Build response format instruction based on format type
+        $formatInstruction = "";
 
+        if ($this->_responseFormat === 'json') {
+            $template = isset($GLOBALS["responseTemplate"]) ? $GLOBALS["responseTemplate"] : [];
 
-        /***
-            In the realm of perfection, the demand to tailor context for every language model would be nonexistent.
+            // Remove fields not included
+            if (!$this->_includeMood && is_array($template) && isset($template['mood'])) {
+                unset($template['mood']);
+            }
+            if (!$this->_includeActions && is_array($template) && isset($template['action'])) {
+                unset($template['action']);
+            }
+            if (!$this->_includeTarget && is_array($template) && isset($template['target'])) {
+                unset($template['target']);
+            }
+            if (!$this->_includeListener && is_array($template) && isset($template['listener'])) {
+                unset($template['listener']);
+            }
 
-                                                                                                Tyler, 2023/11/09
-        ****/
-        
-        if (isset($GLOBALS["FEATURES"]["MEMORY_EMBEDDING"]["ENABLED"]) && $GLOBALS["FEATURES"]["MEMORY_EMBEDDING"]["ENABLED"] && isset($GLOBALS["MEMORY_STATEMENT"]) ) {
-            foreach ($contextData as $n=>$contextline)  {
-                if (is_array($contextline) && isset($contextline["content"])) {
-                    if (strpos($contextline["content"],"#MEMORY")===0) {
-                        $contextData[$n]["content"]=str_replace("#MEMORY","##\nMEMORY\n",$contextline["content"]."\n##\n");
-                    } else if (strpos($contextline["content"],$GLOBALS["MEMORY_STATEMENT"])!==false) {
-                        $contextData[$n]["content"]=str_replace($GLOBALS["MEMORY_STATEMENT"],"(USE MEMORY reference)",$contextline["content"]);
-                    }
+            $prefixPart = trim(implode(' ', array_filter([$prefix, $speechReinforcement], 'strlen')));
+            $formatInstruction = "{$prefixPart} Use ONLY this JSON object to give your answer. Do not send any other characters outside of this JSON structure$zonosTones: " . json_encode($template);
+        } else {
+            $prefixPart = trim(implode(' ', array_filter([$prefix, $speechReinforcement], 'strlen')));
+            $formatInstruction = buildSimpleFormatInstruction(
+                $this->_includeMood,
+                $this->_includeListener,
+                $this->_includeActions,
+                $this->_includeTarget,
+                $prefixPart
+            );
+        }
+
+        $actionsText = "";
+        if (!empty($availableActions)) {
+            $actionsText .= "\n" . $availableActions . "\n";
+        }
+        // For JSON format, instruction goes in system message
+        if ($this->_responseFormat === 'json') {
+            $actionsText .= $formatInstruction;
+        }
+
+        $dynamicEnvironment = "";
+        $systemEntries = [];
+
+        // Process system prompts and extract dynamic sections
+        foreach ($contextData as $n => $element) {
+            if (isset($element["role"]) && $element["role"] == "system") {
+                $systemContentString = '';
+                if (is_string($element['content'])) {
+                    $systemContentString = $element['content'];
+                } elseif (is_array($element['content']) && isset($element['content'][0]['type']) &&
+                          $element['content'][0]['type'] === 'text' && isset($element['content'][0]['text'])) {
+                    $systemContentString = $element['content'][0]['text'];
                 }
+
+                $systemContentCurrent = trim($systemContentString);
+
+                // Extract dynamic sections that change frequently (for reinsertion later)
+                $environmental = extract_and_remove_section($systemContentCurrent, 'Environmental Context');
+                $additional = extract_and_remove_section($systemContentCurrent, 'Additional Information');
+                $equipment = extract_any_subsection($systemContentCurrent, 'Equipment', true);
+                $appearance = extract_any_subsection($systemContentCurrent, 'Physical Appearance', false);
+                $cleanliness = extract_any_subsection($systemContentCurrent, 'Cleanliness', true);
+                $additionalCharacter = extract_specific_section($systemContentCurrent, 'Additional Character Information');
+                $combatStatus = extract_specific_section($systemContentCurrent, 'Combat Vitals');
+                $arousal = extract_specific_section($systemContentCurrent, 'Arousal Status');
+
+                $dynamicEnvironment = $environmental . "\n\n" . $additional . "\n\n" . $additionalCharacter . "\n\n" .
+                                     $combatStatus . "\n\n" . $arousal . "\n\n" . $equipment . "\n\n" .
+                                     $appearance . "\n\n" . $cleanliness;
+
+                // Add custom system instruction
+                $customInstructionPart = !empty($customInstruction) ? "\n" . $customInstruction : '';
+                $finalSend = $systemContentCurrent . $customInstructionPart . "\n" . $actionsText;
+
+                $content = ['type' => 'text', 'text' => $finalSend];
+                if ($this->_provider_caching !== "OpenAI") {
+                    $content['cache_control'] = $cacheControlType;
+                }
+                $systemEntries[] = array("role" => "system", "content" => array($content));
             }
         }
 
-        require_once(__DIR__.DIRECTORY_SEPARATOR."..".DIRECTORY_SEPARATOR."functions".DIRECTORY_SEPARATOR."json_response.php");
+        $finalMessagesToSend = writeArrayToFileWithCache($systemEntries, $cacheSystemFile);
 
-        if (isset($GLOBALS["FUNCTIONS_ARE_ENABLED"]) && $GLOBALS["FUNCTIONS_ARE_ENABLED"]) {
-            $contextData[0]["content"].=$GLOBALS["COMMAND_PROMPT"];
-        }
-        
-        if (isset($GLOBALS["PATCH_PROMPT_ENFORCE_ACTIONS"]) && $GLOBALS["PATCH_PROMPT_ENFORCE_ACTIONS"]) {
-            $prefix="{$GLOBALS["COMMAND_PROMPT_ENFORCE_ACTIONS"]}";
-        } else {
-            $prefix="";
-        }
+        // Continue to Part 3...
+        return $this->_openPart3($contextData, $customParms, $herikaName, $MAX_TOKENS, $max_dialogue_cache_size,
+                                  $lastCustomInstruction, $toggleThinking, $thinkingTokens, $effort_level,
+                                  $CONTEXTHISTORY, $dialogue_cache_uncached_count, $start_time,
+                                  $finalMessagesToSend, $cacheCombinedDialogueFile, $cacheControlType, $dynamicEnvironment, $formatInstruction);
+    }
 
-        if (isset($GLOBALS["HERIKA_SPEECHSTYLE"]) && (!empty($GLOBALS["HERIKA_SPEECHSTYLE"]))) {
-            $speechReinforcement="Use <speech_style> for reference.";
-        } else
-            $speechReinforcement="";
+    // Part 3: Dialogue History Caching and Cache Control Placement
+    private function _openPart3($contextData, $customParms, $herikaName, $MAX_TOKENS, $max_dialogue_cache_size,
+                                 $lastCustomInstruction, $toggleThinking, $thinkingTokens, $effort_level,
+                                 $CONTEXTHISTORY, $dialogue_cache_uncached_count, $start_time,
+                                 $finalMessagesToSend, $cacheCombinedDialogueFile, $cacheControlType, $dynamicEnvironment, $formatInstruction) {
 
-        $zonosTones = $GLOBALS["TTSFUNCTION"] == "zonos_gradio" ? " (Response tones are mandatory in the response)" : "";
-        $contextData[]=[
-            'role' => 'user',
-            'content' => "{$prefix}. $speechReinforcement \nUse ONLY this JSON object to give your answer. Do not send any other characters outside of this JSON structure $zonosTones: \n".json_encode($GLOBALS["responseTemplate"])
-        ];
-        $pb=[];
-        $pb["user"]="";
-        $pb["system"]="";
-        
-        $contextDataOrig=array_values($contextData);
-        $lastrole="";
-        $assistantAppearedInhistory=false;
-        $lastTargetBuffer="";
-        $assistantRoleBuffer="";
-        $n_ctxsize = sizeof($contextDataOrig); 
-        $this->_webbackup_func = $GLOBALS["FUNCTIONS_ARE_ENABLED"] ?: false;
+        // Process dialogue history (non-system entries)
+        $contentTextToSend = [];
+        $memoryItems = [];  // For memory mode handling
 
-        foreach ($contextDataOrig as $n=>$element) {
-            
-            if (!is_array($element)) {
-                Logger::debug("$n=>$element was not an array");
+        foreach ($contextData as $n => $element) {
+            if (!isset($element))
                 continue;
 
-            }
-
-            if (isset($element["content"]) && ($element["role"]!="tool") && ($n < ($n_ctxsize-2)) && ($n > ($n_ctxsize-6)) ) { // start online search request check
-                //$s_msg = $element["content"];
-                $i_pos = $this->isWebSearchInMessage($element["content"]); //check search trigger
-
-                if ($this->_websearch && ($this->_websearch_index < $n) && ($element["role"] == "user")) {
-                    if($i_pos === false) {
-                        if (strpos($element["content"], "##") === false) { //is not memory mark
-                            $this->_websearch = false; //previous web search was found in context history, do not repeat the search 
-                            $GLOBALS["FUNCTIONS_ARE_ENABLED"] = $this->_webbackup_func;
-                            Logger::debug("online FALSE, {$n}/{$n_ctxsize} line: ".$element["content"]);
-                        }
-                    }
+            if (isset($element["role"]) && $element["role"] != "system") {
+                $contentString = '';
+                if (is_string($element['content'])) {
+                    $contentString = $element['content'];
+                } elseif (is_array($element['content']) && isset($element['content'][0]['type']) &&
+                          $element['content'][0]['type'] === 'text' && isset($element['content'][0]['text'])) {
+                    $contentString = $element['content'][0]['text'];
                 }
 
-                if(!($i_pos === false)) { // found search trigger
-                    $this->_websearch_text = $element["content"];
-                    $this->_websearch_index = $n;
-                    $this->_websearch = true;
-                    $GLOBALS["FUNCTIONS_ARE_ENABLED"] = false;
-                    $GLOBALS["FEATURES"]["MEMORY_EMBEDDING"]["ENABLED"] = false;
-                    Logger::debug("online TRUE, {$n}/{$n_ctxsize} src: " . $this->_websearch_text);
+                if (containsOnlySymbols($contentString)) {
+                    continue;
                 }
-            } // --- end online search 
-            
-            if ($n>=($n_ctxsize-1) && $element["role"]!="tool") {
-                // Last element
-                $pb["user"].=$element["content"];
-                $contextDataCopy[]=$element;
-                
-            } else {
-                
-                if ($lastrole=="assistant" && $lastrole!=$element["role"] && $element["role"]!="tool" ) {
-                    $contextDataCopy[]=[
-                        "role"=>"assistant",
-                        "content"=>"{\"character\": \"{$GLOBALS["HERIKA_NAME"]}\", \"listener\": \"$lastTargetBuffer\", \"mood\": \"\", \"action\": \"Talk\",\"target\": \"\", \"message\":\"".trim($assistantRoleBuffer)."\"}"
-                        
-                    ];
-                    $lastTargetBuffer="";
-                    $assistantRoleBuffer="";
-                    $lastrole=$element["role"];
-                }
-                
-                if ($element["role"]=="system") {
-                    
-                    $pb["system"]=$element["content"]."\nThis is the script history for this story\n#CONTEXT_HISTORY\n";
-                    $contextDataCopy[]=$element;
-                    
-                } else if ($element["role"]=="user") {
-                    if (empty($element["content"])) {
-                        Logger::debug("Empty element[content]".__FILE__." ".__LINE__);
-                        //unset($contextData[$n]);
-                    } else
-                        $contextDataCopy[]=$element;
-                    
-                    $pb["system"].=trim($element["content"])."\n";
-                    
-                } else if ($element["role"]=="assistant") {
-                    $assistantAppearedInhistory=true;
-                    $dialogueTarget=extractDialogueTarget($element["content"]) ?? "none"; // moved here to be available in tool_calls 
-                    if (isset($element["tool_calls"])) {
-                        $pb["system"].="{$GLOBALS["HERIKA_NAME"]} issued ACTION {$element["tool_calls"][0]["function"]["name"]}";
-                        $lastAction="{$GLOBALS["HERIKA_NAME"]} issued ACTION {$element["tool_calls"][0]["function"]["name"]} {$element["tool_calls"][0]["function"]["arguments"]}";
-                        $lastActionName=$element["tool_calls"][0]["function"]["name"];
-                        $localFuncCodeName=getFunctionCodeName($element["tool_calls"][0]["function"]["name"]);
-                        $localArguments=json_decode($element["tool_calls"][0]["function"]["arguments"],true);
-                        if (isset($GLOBALS["F_RETURNMESSAGES"][$localFuncCodeName])) {
-                            $lastAction=strtr($GLOBALS["F_RETURNMESSAGES"][$localFuncCodeName],[
-                                        "#TARGET#"=>current($localArguments),
-                                        ]);
-                        }
-                        $contextDataCopy[]=[
-                                "role"=>"assistant",
-                                "content"=>"{\"character\": \"{$GLOBALS["HERIKA_NAME"]}\", \"listener\": \"{$dialogueTarget["target"]}\", \"mood\": \"\",\"action\": \"$lastActionName\",\"target\": \"".current($localArguments)."\", \"message\": \"\"}"
-                            ];
-                            
-                        $gameRequestCopy=$GLOBALS["gameRequest"];    
-                        $gameRequestCopy[3]="{\"character\": \"{$GLOBALS["HERIKA_NAME"]}\", \"listener\": \"{$dialogueTarget["target"]}\", \"mood\": \"\",\"action\": \"$lastActionName\", \"target\": \"".current($localArguments)."\", \"message\": \"\"}";
-                        $gameRequestCopy[0]="logaction";
-                        logEvent($gameRequestCopy);   
-                        
-                        // Seems we were missing this case
-                        if (isset($assistantRoleBuffer) && !empty($assistantRoleBuffer)) {
-                            $contextDataCopy[]=[
-                                "role"=>"assistant",
-                                "content"=>"{\"character\": \"{$GLOBALS["HERIKA_NAME"]}\", \"listener\": \"$lastTargetBuffer\", \"mood\": \"\", \"action\": \"Talk\",\"target\": \"\", \"message\":\"".trim($assistantRoleBuffer)."\"}"
-                                
-                            ];
-                            $lastTargetBuffer="";
-                            $assistantRoleBuffer="";
-                            $lastrole=$element["role"];
 
-                        }                        
-                        
-                        unset($contextData[$n]);
+                if (!empty(trim($contentString))) {
+                    $item = array('type' => 'text', 'text' => "$contentString");
+
+                    // Memory mode handling: if 'fresh' mode, separate memory items
+                    if ($this->_memoryMode === 'fresh' && strpos($contentString, '<memory>') !== false) {
+                        $memoryItems[] = $item;
                     } else {
-                        $alreadyJs=json_decode($element["content"],true);
-                        if (is_array($alreadyJs)) {
-                            $contextDataCopy[]=[
-                                    "role"=>"assistant",
-                                    "content"=>json_encode($alreadyJs)
-                            ];
-                            
-                        } else {
-                            //error_log("#### ".$element["content"]);
-                            $pb["system"].=$element["content"]."\n";
-                            //$dialogueTarget=extractDialogueTarget($element["content"]); // moved up
-                            // Trying to provide examples
-                            if (true) {
-                                $assistantRoleBuffer.=$dialogueTarget["cleanedString"];                                
-                                $lastTargetBuffer=$dialogueTarget["target"];
-                                unset($contextData[$n]);
-                                /*
-                                $contextData[$n]=[
-                                    "role"=>"assistant",
-                                    "content"=>"{\"character\": \"{$GLOBALS["HERIKA_NAME"]}\", \"listener\": \"{$dialogueTarget["target"]}\", \"mood\": \"\", \"action\": \"Talk\",\"target\": \"\", \"message\":\"".trim($dialogueTarget["cleanedString"])."\"}"
-                                    
-                                ];
-                                */
-
-                            } else {
-                                
-                                $contextData[$n]=[
-                                        "role"=>"assistant",
-                                        "content"=>"{\"character\": \"{$GLOBALS["HERIKA_NAME"]}\", \"listener\": \"{$dialogueTarget["target"]}\", \"mood\": \"\", \"action\": \"Talk\",\"target\": \"\", \"message\":\"".trim($dialogueTarget["cleanedString"])."\"}"
-                                        
-                                    ];
-                            }
-                        }
+                        $contentTextToSend[] = $item;
                     }
-                    
-                } else if ($element["role"]=="tool") {
-                    
-                        if (!empty($element["content"])) {
-                            $pb["system"].=$element["content"]."\n";
-                            
-                           
-                            if (strpos($element["content"],"Error")===0) {
-                                $GLOBALS["PATCH_STORE_FUNC_RES"]="{$GLOBALS["HERIKA_NAME"]} issued ACTION, but {$element["content"]}";
-                                $contextDataCopy[]=[
-                                    "role"=>"user",
-                                    "content"=>"The Narrator: ({$GLOBALS["HERIKA_NAME"]} used action $lastActionName). {$GLOBALS["PATCH_STORE_FUNC_RES"]}"
-                                    
-                                ];
-                            } else {
-                                
-                                $GLOBALS["PATCH_STORE_FUNC_RES"]=strtr($lastAction,["#RESULT#"=>$element["content"]]);
-                                $contextDataCopy[]=[
-                                    "role"=>"user",
-                                    "content"=>"The Narrator: ({$GLOBALS["HERIKA_NAME"]} used action $lastActionName). {$GLOBALS["PATCH_STORE_FUNC_RES"]} ",
-                                    
-                                ];
-                            }
-                        } else {
-                            ;
-                            //unset($contextData[$n]);
-                        }
-                            
                 }
-                
-            }
-
-            
-
-            // 
-            $lastrole=$element["role"];
-        }
-        
-
-        $contextData=$contextDataCopy;
-
-        // Compact and remove context elements with empty content
-        $contextDataCopy=[];
-        foreach ($contextData as $n=>$element) {
-            if (!empty($element["content"])) {
-                $contextDataCopy[]=$element;
             }
         }
-        
-        if ((isset($GLOBALS["CONNECTOR"][$this->name]["PREFILL_JSON"])) && ($GLOBALS["CONNECTOR"][$this->name]["PREFILL_JSON"])) {
-            $GLOBALS["PATCH"]["PREAPPEND"]="{\"character\": \"{$GLOBALS["HERIKA_NAME"]}\",";
-            $contextDataCopy[]= ["role"=>"assistant","content"=>$GLOBALS["PATCH"]["PREAPPEND"]];
+
+        // Remove first few items if list is large (optimization)
+        if (count($contentTextToSend) > 4) {
+            $contentTextToSend = array_slice($contentTextToSend, 4);
         }
-        
-        $contextData=$contextDataCopy;
-        
-        if (!$assistantAppearedInhistory) { // is this still needed?
-            
-            if (isset($GLOBALS["CHIM_NO_EXAMPLES"]) && $GLOBALS["CHIM_NO_EXAMPLES"]) {
-                $contextExamples=[];
+
+        // Remove instruction to add back later
+        $instruction = array_pop($contentTextToSend);
+
+        // Manage cached event list (excludes memory items in 'fresh' mode)
+        $completeEventList = manageCharacterEventList($contentTextToSend, $cacheCombinedDialogueFile, $max_dialogue_cache_size);
+        logMessage("New elements added to cache: {$completeEventList['new_count']}");
+        $completeEventList = $completeEventList['updated_list'];
+
+        // Add custom instructions if present
+        $addToIndex = 0;
+        if (!empty($lastCustomInstruction)) {
+            $addToIndex = 1;
+            $completeEventList[] = ['type' => 'text', 'text' => $lastCustomInstruction];
+        }
+
+        // For simple format, append format instruction to user instruction
+        if ($this->_responseFormat === 'simple' && !empty($formatInstruction)) {
+            $instructionText = is_array($instruction) && isset($instruction['text']) ? $instruction['text'] : $instruction;
+            $instructionText .= ' ' . $formatInstruction;
+            $instruction = is_array($instruction) ? ['type' => 'text', 'text' => $instructionText] : $instructionText;
+        }
+
+        // Re-add memory items in 'fresh' mode (they go at end, uncached)
+        if ($this->_memoryMode === 'fresh' && !empty($memoryItems)) {
+            foreach ($memoryItems as $memItem) {
+                $completeEventList[] = $memItem;
+            }
+            logMessage("Memory mode 'fresh': Added " . count($memoryItems) . " memory items to end of context");
+        }
+
+        $completeEventList[] = $instruction;
+
+        // Store default target for simple format
+        $this->_defaultTarget = getLastUserMessageSpeaker($contextData);
+
+        // Calculate cache control index
+        $totalElements = count($completeEventList);
+        $lastIndex = $totalElements - $dialogue_cache_uncached_count - 1 - $addToIndex;
+
+        logMessage("Cache control calculation: totalElements=$totalElements, uncached=$dialogue_cache_uncached_count, calculatedIndex=$lastIndex");
+
+        // Place cache control marker
+        if ($lastIndex >= 0) {
+            if ($this->_provider_caching == "Gemini") {
+                logMessage("Using gemini caching (ignores dialogue_cache_uncached_count)");
+                $offset = 10;
+                $elements = count($completeEventList);
+                $batchSize = $CONTEXTHISTORY - $offset;
+                $batchNumber = floor($elements / $batchSize);
+
+                $indexToCache = max(0, ($batchNumber * $CONTEXTHISTORY) - $offset);
+
+                if ($indexToCache >= $elements) {
+                    $indexToCache = $elements - 1;
+                }
+
+                if ($indexToCache == 0) {
+                    $indexToCache = 33; // Gemini requires minimum 32 tokens
+                }
+
+                if (isset($completeEventList[$indexToCache]) && $this->_provider_caching != "OpenAI") {
+                    $completeEventList[$indexToCache]["cache_control"] = $cacheControlType;
+                }
             } else {
-                // EXAMPLES
-                $contextExamples[]= [
-                    'role' => 'user', 
-                    'content' => "The Narrator: {$GLOBALS["PLAYER_NAME"]} looks at {$GLOBALS["HERIKA_NAME"]}"
-                ];
-                
-                $contextExamples[]= [
-                    "role"=>"assistant",
-                    "content"=>"{\"character\": \"{$GLOBALS["HERIKA_NAME"]}\",\"listener\": \"{$GLOBALS["PLAYER_NAME"]}\", \"mood\": \"default\", \"action\": \"Talk\",\"target\": \"\", \"message\": \"What are you looking at?\"}"
-                        
-                ];
-                
-                $finalContextDataWithExamples=[];
-                foreach ($contextData as $n=>$final) {
-                    if ($final["role"]=="system") {
-                        $finalContextDataWithExamples[]=$final;
-                        foreach ($contextExamples as $example)
-                            $finalContextDataWithExamples[]=$example;
-                        }
-                    else
-                        $finalContextDataWithExamples[]=$final;
+                logMessage("Using standard caching with dialogue_cache_uncached_count=$dialogue_cache_uncached_count");
+                if (isset($completeEventList[$lastIndex]) && $this->_provider_caching != "OpenAI") {
+                    $completeEventList[$lastIndex]["cache_control"] = $cacheControlType;
+                    logMessage("Cache control placed at index $lastIndex");
                 }
-               
-                $contextData=$finalContextDataWithExamples;
-            }        
+            }
         }
 
-        $temperature = floatval(($GLOBALS["CONNECTOR"][$this->name]["temperature"]) ? : 0.7);
-        if ($temperature < 0.0) $temperature = 0.0;
-        else if ($temperature > 2.0) $temperature = 2.0; 
+        // Add dynamic environment context if available
+        if (!containsOnlySymbols($dynamicEnvironment)) {
+            $text = preg_replace('/^\s*#+.*$/m', '', $dynamicEnvironment);
+            $text = preg_replace('/^\s*[-•]\s*/', '', $text);
+            $text = preg_replace('/\s+/', ' ', $text);
+            $text = preg_replace('/[.]{2,}/', '.', $text);
+            $dynamicEnvironment = trim("ASSISTANT: Environmental Context: $text");
 
-        $presence_penalty = floatval(($GLOBALS["CONNECTOR"][$this->name]["presence_penalty"]) ? : 0.0);
-        if ($presence_penalty < -2.0) $presence_penalty = -2.0;
-        else if ($presence_penalty > 2.0) $presence_penalty = 2.0; 
-
-        $frequency_penalty = floatval(($GLOBALS["CONNECTOR"][$this->name]["frequency_penalty"]) ? : 0.0); 
-        if ($frequency_penalty < -2.0) $frequency_penalty = -2.0;
-        else if ($frequency_penalty > 2.0) $frequency_penalty = 2.0; 
-
-        $repetition_penalty = floatval(($GLOBALS["CONNECTOR"][$this->name]["repetition_penalty"]) ? : 0.0);
-        if ($repetition_penalty < 0.0) $repetition_penalty = 0.0;
-        else if ($repetition_penalty > 2.0) $repetition_penalty = 2.0; 
-
-        $top_p = floatval(($GLOBALS["CONNECTOR"][$this->name]["top_p"]) ? : 1.0);
-        if ($top_p > 1) $top_p = 1.0;
-        else if ($top_p < 0.0) $top_p = 0.0; 
-
-        $min_p = floatval(($GLOBALS["CONNECTOR"][$this->name]["min_p"]) ? : 0.0);
-        if ($min_p > 1) $min_p = 1.0;
-        else if ($min_p < 0.0) $min_p = 0.0; 
-
-        $top_a = floatval(($GLOBALS["CONNECTOR"][$this->name]["top_a"]) ? : 0.0);
-        if ($top_a > 1) $top_a = 1.0;
-        else if ($top_a < 0.0) $top_a = 0.0; 
-
-        $top_k = intval(($GLOBALS["CONNECTOR"][$this->name]["top_k"]) ? : 0);
-        if ($top_k < 0) $top_k = 0; 
-
-        if (isset($customParms["MAX_TOKENS"])) {
-            $MAX_TOKENS=intval($customParms["MAX_TOKENS"]);
-            unset($customParms["MAX_TOKENS"]);
+            $insertPosition = max(0, count($completeEventList) - 2);
+            array_splice($completeEventList, $insertPosition, 0, [array('type' => 'text', 'text' => $dynamicEnvironment)]);
         }
-        if (isset($GLOBALS["FORCE_MAX_TOKENS"])) {
-            $MAX_TOKENS=intval($GLOBALS["FORCE_MAX_TOKENS"]);
+
+        $completeEventList = removeDuplicateMemories($completeEventList);
+
+        $tokenCount = countTokensByWords($completeEventList);
+        logMessage("Estimated token count: $tokenCount");
+
+        // Handle prefill for simple format (incompatible with reasoning)
+        if ($this->_responseFormat === 'simple' && !$toggleThinking) {
+            $finalMessagesToSend[] = array('role' => 'user', 'content' => $completeEventList);
+            $prefillText = '(';
+            $finalMessagesToSend[] = array('role' => 'assistant', 'content' => array(
+                array('type' => 'text', 'text' => $prefillText)
+            ));
+            $this->_usedPrefill = true;
+            $this->_prefillContent = $prefillText;
+        } else {
+            $finalMessagesToSend[] = array('role' => 'user', 'content' => $completeEventList);
+            $this->_usedPrefill = false;
+            $this->_prefillContent = '';
         }
-        
+
+        // Continue to Part 4...
+        return $this->_openPart4($customParms, $herikaName, $MAX_TOKENS, $toggleThinking, $thinkingTokens,
+                                  $effort_level, $start_time, $finalMessagesToSend);
+    }
+
+    // Part 4: Final Payload Construction and API Request
+    private function _openPart4($customParms, $herikaName, $MAX_TOKENS, $toggleThinking, $thinkingTokens,
+                                 $effort_level, $start_time, $finalMessagesToSend) {
+
+        // Detect model capabilities
+        $isOpenAIReasoning = $this->isOpenAIModel($this->_model);
+        $isAlwaysReasoning = $this->isAlwaysReasoningModel($this->_model);
+
+        // Build reasoning configuration
+        $reasoning = [
+            "exclude" => true,
+            "enabled" => ($toggleThinking || $isAlwaysReasoning),
+        ];
+
+        if ($isOpenAIReasoning && $reasoning["enabled"]) {
+            $reasoning["effort"] = $effort_level;
+        } else if ($reasoning["enabled"]) {
+            $reasoning["max_tokens"] = intval($thinkingTokens);
+        }
+
+        // Construct payload
         $data = array(
             'model' => $this->_model,
-            'messages' => $contextData,
-            'stream' => $this->_is_streaming, 
-            'max_tokens' => $MAX_TOKENS,
-            'temperature' => $temperature, 
-            'top_k' => $top_k,
-            'top_p' => $top_p, 
-            'min_p' => $min_p,
-            'top_a' => $top_a,
-            'presence_penalty' => $presence_penalty, 
-            'frequency_penalty' => $frequency_penalty, 
-            'repetition_penalty' => $repetition_penalty,
-            'stop'=>[
-                    'USER',
-                ],
-            'transforms'=>[]
+            'messages' => $finalMessagesToSend,
+            'stream' => true,
+            'temperature' => floatval((isset($GLOBALS["CONNECTOR"][$this->name]["temperature"])) ? $GLOBALS["CONNECTOR"][$this->name]["temperature"] : 1),
+            'top_k' => floatval((isset($GLOBALS["CONNECTOR"][$this->name]["top_k"])) ? $GLOBALS["CONNECTOR"][$this->name]["top_k"] : 0),
+            'top_p' => floatval((isset($GLOBALS["CONNECTOR"][$this->name]["top_p"])) ? $GLOBALS["CONNECTOR"][$this->name]["top_p"] : 1),
+            'frequency_penalty' => floatval((isset($GLOBALS["CONNECTOR"][$this->name]["frequency_penalty"])) ? $GLOBALS["CONNECTOR"][$this->name]["frequency_penalty"] : 0),
+            'presence_penalty' => floatval((isset($GLOBALS["CONNECTOR"][$this->name]["presence_penalty"])) ? $GLOBALS["CONNECTOR"][$this->name]["presence_penalty"] : 0),
+            'repetition_penalty' => floatval((isset($GLOBALS["CONNECTOR"][$this->name]["repetition_penalty"])) ? $GLOBALS["CONNECTOR"][$this->name]["repetition_penalty"] : 1),
+            'min_p' => floatval((isset($GLOBALS["CONNECTOR"][$this->name]["min_p"])) ? $GLOBALS["CONNECTOR"][$this->name]["min_p"] : 0),
+            'top_a' => floatval((isset($GLOBALS["CONNECTOR"][$this->name]["top_a"])) ? $GLOBALS["CONNECTOR"][$this->name]["top_a"] : 0),
+            'reasoning' => $reasoning
         );
-        
-        if ($GLOBALS["CONNECTOR"][$this->name]["ENFORCE_JSON"]) {
-            if (isset($GLOBALS["CONNECTOR"][$this->name]["json_schema"]) && $GLOBALS["CONNECTOR"][$this->name]["json_schema"]) {
-                $data["response_format"]=$GLOBALS["structuredOutputTemplate"];
+
+        // Handle max tokens
+        $effectiveMaxTokens = null;
+        if (isset($customParms["MAX_TOKENS"])) {
+            $maxTokensValue = $customParms["MAX_TOKENS"] + 0;
+            if ($maxTokensValue >= 0) {
+                $effectiveMaxTokens = $maxTokensValue;
+            }
+        } else {
+            if (isset($MAX_TOKENS))
+                $effectiveMaxTokens = $MAX_TOKENS;
+        }
+        if (isset($GLOBALS["FORCE_MAX_TOKENS"])) {
+            $forceMaxTokensValue = intval($GLOBALS["FORCE_MAX_TOKENS"]);
+            if ($forceMaxTokensValue >= 0) {
+                $effectiveMaxTokens = $forceMaxTokensValue;
+            }
+        }
+        if ($effectiveMaxTokens !== null) {
+            if ($effectiveMaxTokens > 0) {
+                $data["max_tokens"] = (int) $effectiveMaxTokens;
             } else {
-                $data["response_format"]=["type"=>"json_object"];
+                unset($data["max_tokens"]);
             }
+        } else {
+            if (isset($data["max_tokens"]))
+                unset($data["max_tokens"]);
         }
-        
-        // Add Google safety settings if block_none is enabled in metadata (for Google models via OpenRouter)
-        if (isset($GLOBALS["CONNECTOR"][$this->name]["block_none"]) && $GLOBALS["CONNECTOR"][$this->name]["block_none"]) {
-            // Only add safety settings if this is a Google/Gemini model
-            if (preg_match('/google|gemini/i', $this->_model)) {
-                $data["safety_settings"] = [
-                    ["category" => "HARM_CATEGORY_HARASSMENT", "threshold" => "BLOCK_NONE"],
-                    ["category" => "HARM_CATEGORY_HATE_SPEECH", "threshold" => "BLOCK_NONE"],
-                    ["category" => "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold" => "BLOCK_NONE"],
-                    ["category" => "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold" => "BLOCK_NONE"]
+
+        // Add provider information
+        if (!empty($GLOBALS["CONNECTOR"][$this->name]["PROVIDER"])) {
+            $providers = explode(",", $GLOBALS["CONNECTOR"][$this->name]["PROVIDER"]);
+            $data["provider"] = array("order" => $providers);
+        } else {
+            $data["provider"] = array("order" => array("Anthropic"));
+        }
+
+        $data["transforms"] = array();
+
+        // Handle OpenAI reasoning models - special parameter handling
+        if ($isOpenAIReasoning) {
+            if (isset($data["max_tokens"])) {
+                $data["max_completion_tokens"] = $data["max_tokens"];
+                unset($data["max_tokens"]);
+            }
+
+            if ($reasoning["enabled"]) {
+                $cleanedData = [
+                    'model' => $data['model'],
+                    'messages' => $data['messages'],
+                    'stream' => $data['stream'],
+                    'reasoning' => $data['reasoning']
                 ];
-            }
-        }
-            
-        if ($this->_is_reasoning) { // add parameter to hide <think> content
 
-            if (!(stripos($this->_model, "x-ai/grok-4.1-fast") === false)) { //x-ai/grok-4.1-fast
-                $data["reasoning"] = array ('exclude' => true, 'enabled' => false); // disable reasoning by default, if _disable_reasoning = false, will be overwritten below
-            }
-            
-            //$data["reasoning"] = array ('exclude' => true, 'enabled' => true); // exclude = true - Use reasoning but don't include it in the response; enabled = false - do not use reasoning
-            if ($this->_disable_reasoning)
-                $data["reasoning"] = array ('exclude' => true, 'enabled' => false); // default value, CoT removed, resoning disabled, fast response
-            else
-                $data["reasoning"] = array ('exclude' => true, 'enabled' => true); // CoT removed, resoning enabled, slow
-            
-            //Logger::debug("[OPENROUTER]  Excluding reasoning");
-            //$data["reasoning"] = array ('exclude' => true, 'effort' => 'low'); // reduce reasoning tokens - OpenAI
-            //$data["reasoning"] = array ('exclude' => true, 'max_tokens' => 64 ); // reduce reasoning tokens - Anthropic 
-            //Logger::debug("reasoning " . $this->_model);
-            if (!(stripos($this->_model, "qwen3-") === false)) {//qwen3
-                $data["enable_thinking"] = false;
-            } elseif (stripos($this->_model, "grok-3-mini") != false) {//grok-3-mini needs reasoning and cannot be disabled
-                $data["reasoning"]["enabled"] = true;
-            } elseif (stripos($this->_model, "qwen3-235b-a22b-thinking-2507") != false) {//qwen/qwen3-235b-a22b-thinking-2507 needs reasoning cand cannot be disabled
-                $data["reasoning"]["enabled"] = true;
-            } elseif ($this->_model=="x-ai/grok-4") {// needs reasoning and cannot be disabled 
-                $data["reasoning"]["enabled"] = true;
-            }         
-        }
-        
-        if ($this->_is_mistral_ai) { // Mistral AI API does not support penalty params
-            unset($data["presence_penalty"]); 
-            unset($data["frequency_penalty"]);
-        } elseif ($this->_is_grok) { //Argument not supported on this model: stop
-            unset($data["stop"]); 
-        } elseif ($this->_is_openai) {
-            // OpenAI models use max_completion_tokens
-            //Logger::debug("[OPENROUTER] Excluding reasoning this->_is_openai");
-            $data['max_completion_tokens'] = $MAX_TOKENS;
-            unset($data['max_tokens']); 
-            if ($this->_is_reasoning) {
-                $data["reasoning"] = array ('exclude' => true, 'effort' => 'low'); // reduce reasoning tokens - OpenAI
-            }
-        }
-
-        if ($MAX_TOKENS<1) {
-            unset($data["max_completion_tokens"]); 
-            unset($data["max_tokens"]); 
-        }
-
-        if (!empty($GLOBALS["CONNECTOR"]["openrouterjson"]["PROVIDER"])) {
-            $providers=explode(",",$GLOBALS["CONNECTOR"]["openrouterjson"]["PROVIDER"]);
-            $data["provider"]=["order"=>$providers];
-        } 
-
-        if (isset($this->_fallback_models) && (is_array($this->_fallback_models)) && (count($this->_fallback_models) > 0)) {
-            $data['models'] = $this->_fallback_models;
-        }
-
-        if (isset($this->_providers_sort) && (in_array($this->_providers_sort,['price','throughput','latency']))) {
-            $data['provider']['sort'] = $this->_providers_sort; 
-        }
-
-        if (isset($this->_providers2ignore) && (is_array($this->_providers2ignore)) && (count($this->_providers2ignore) > 0)) {
-            $data['provider']['ignore'] = $this->_providers2ignore; 
-        }
-
-        if (isset($this->_provider_quantizations) && (is_array($this->_provider_quantizations)) && (count($this->_provider_quantizations) > 0)) {
-            $data['provider']['quantizations'] = $this->_provider_quantizations; 
-        }
-
-        if (isset($this->_provider_max_price) && (is_array($this->_provider_max_price)) && (count($this->_provider_max_price) == 2)) {
-            $json_price = json_encode($this->_provider_max_price); 
-            if (isset($json_price))
-                $data['provider']['max_price'] = json_decode($json_price);
-        }
-        
-        if ($this->_websearch) { // online search request 
-
-            $sx = $this->_model;
-            if (strpos($sx, ":online") === false) 
-                $sx = $sx . ":online";   
-            $this->_model = $sx;
-
-            $data["model"] = $this->_model;
-            
-            $search_text = $this->_websearch_text;
-            $target = "";
-            $i_pos = strpos($search_text, ":");
-            if (!($i_pos === false)) {
-                $target = substr($this->_websearch_text, 0, $i_pos);
-                $search_text = substr($this->_websearch_text,strlen($target)+1);
-                $i_pos2 = strripos($search_text, "(Talking to");
-                if (!($i_pos2 === false)) {
-                    $search_text = substr($search_text, 0, $i_pos2); 
+                if (isset($data['max_completion_tokens'])) {
+                    $cleanedData['max_completion_tokens'] = $data['max_completion_tokens'];
                 }
+                if (isset($data['provider'])) {
+                    $cleanedData['provider'] = $data['provider'];
+                }
+                if (isset($data['transforms'])) {
+                    $cleanedData['transforms'] = $data['transforms'];
+                }
+
+                $data = $cleanedData;
             }
-            if (stripos($search_text, "Skyrim") === false) 
-                $s_prefix = "Skyrim lore ";
-            else
-                $s_prefix = "";
-
-            $data["response_format"] = array ('type' => 'json_object');
-            $data["stream"] = true;
-
-            $data["messages"] = array(); //clean everything 
-            $data["messages"] = [
-                ['role' => 'system', 
-                 'content' => "" // "Role-play in Skyrim universe. "
-                 ."You are an expert with extensive knowledge about Skyrim lore focusing on puzzle solutions, quests, places and people." 
-                 ." Use web sources like gamerant.com, en.uesp.net, elderscrolls.fandom.com, gaming.stackexchange.com and avoid video sources like youtube.com "
-                ],
-                ['role' => 'user',
-                 'content' => $s_prefix . trim($search_text)
-                ],
-                ['role' => 'user',
-                 'content' => trim(" {$speechReinforcement} Always use this JSON object to give your answer: ".json_encode($GLOBALS["responseTemplate"], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES ))
-                ]
-            ];
-
-            $data["plugins"] = array();
-            $data["plugins"] = [
-                ['id' => 'web', 
-                 'search_prompt' => "Search the web to find relevant information related to Skyrim universe. "
-                    . "Include relevant search results to provide most informative response. "
-                    . "Write your answer from first person point of view. "
-                    //. "IMPORTANT: avoid markdown and any text formatting, lists, numbered lists, step by step instructions. " 
-                    . "Never mention web sources. ", // production
-                 'max_results' => 2 
-                ]
-            ];
-
-        } // --- end online search request
-
-        if (isset($GLOBALS["CONNECTOR"][$this->name]["extra_parameters"]) && is_array($GLOBALS["CONNECTOR"][$this->name]["extra_parameters"])) {
-            foreach ($GLOBALS["CONNECTOR"][$this->name]["extra_parameters"] as $k=>$v) {
-                $data[$k]=$v;
-            }
-        }        
-
-        if (stripos($data["model"], "openai/gpt-5-nano")===0) {
-            unset($data["temperature"]);
-            unset($data["top_p"]);
         }
 
+        // Log request
+        if (!isset($GLOBALS["DEBUG_DATA"])) {
+            $GLOBALS["DEBUG_DATA"] = array();
+        }
+        $GLOBALS["DEBUG_DATA"]["full"] = ($data);
+        $this->_dataSent = json_encode($data, JSON_PRETTY_PRINT);
 
-        $GLOBALS["DEBUG_DATA"]["full"]=($data);
+        try {
+            $finalMsgCount = isset($finalMessagesToSend) ? count($finalMessagesToSend) : 0;
+            $logEntry = sprintf(
+                "[%s] [%s:%s]\nPayload (%d msgs):\n%s\n---\n",
+                date(DATE_ATOM),
+                $this->name,
+                $herikaName,
+                $finalMsgCount,
+                var_export($data, true)
+            );
+            @file_put_contents(__DIR__ . "/../log/context_sent_to_llm.log", $logEntry, FILE_APPEND | LOCK_EX);
+        } catch (Exception $e) {
+            logMessage("Context Log Err: " . $e->getMessage());
+        }
 
-        file_put_contents(__DIR__."/../log/context_sent_to_llm.log",date(DATE_ATOM)."\n=\n".var_export($data,true)."\n=\n", FILE_APPEND);
+        // Prepare API request
+        $apiKey = isset($GLOBALS["CONNECTOR"][$this->name]["API_KEY"]) ? $GLOBALS["CONNECTOR"][$this->name]["API_KEY"] : '';
+        if (empty($apiKey)) {
+            logMessage("API Key missing!");
+            return null;
+        }
 
         $headers = array(
             'Content-Type: application/json',
-            "Authorization: Bearer {$GLOBALS["CONNECTOR"][$this->name]["API_KEY"]}",
+            "Authorization: Bearer {$apiKey}",
             "HTTP-Referer:  https://dwemerdynamics.com/",
             "X-Title: Dwemer Dynamics"
         );
 
-        $data["usage"]=["include"=>true];
+        // Anthropic-specific headers for extended cache TTL
+        if ($this->_provider_caching === "Anthropic") {
+            $headers[] = "anthropic-beta: extended-cache-ttl-2025-04-11";
+        }
 
-        $timeout = max(intval(($GLOBALS["HTTP_TIMEOUT"]) ?? 30), $this->_timeout);
+        $timeout = isset($GLOBALS["HTTP_TIMEOUT"]) ? (int) $GLOBALS["HTTP_TIMEOUT"] : 60;
         $options = array(
             'http' => array(
                 'method' => 'POST',
                 'header' => implode("\r\n", $headers),
                 'content' => json_encode($data),
-                'timeout' => $timeout, 
-                "ignore_errors" => true
+                'timeout' => $timeout,
+                'ignore_errors' => true
             )
         );
 
         $context = stream_context_create($options);
-        
-        $this->primary_handler = $this->send($this->_url, $context);
-        if (!$this->primary_handler) {
-            $error=error_get_last();
-            Logger::error(trim(print_r($error,true)));
 
-            if ($GLOBALS["db"]) {
-                $GLOBALS["db"]->insert(
-                'audit_request',
-                    array(
-                        'request' => json_encode($data),
-                        'result' => $error["message"],
-                        'connector'=>$this->name,
-                        'url'=>$this->_url
-                    ));
-            }
+        // Initialize stream state
+        $this->primary_handler = null;
+        $this->_rawbuffer = "";
+        $this->_buffer = "";
+        $this->_forcedClose = false;
+        $this->_jsonResponsesEncoded = array();
+
+        $end_time = microtime(true);
+        $execution_time = $end_time - $start_time;
+        logMessage("Time for preparing cached request: $execution_time seconds");
+
+        // Open stream
+        try {
+            $this->primary_handler = $this->send($this->_url, $context);
+        } catch (Exception $e) {
+            logMessage("fopen Exception [{$this->name}:{$herikaName}]: " . $e->getMessage());
             return null;
-        } else {
-            $status_code = $this->getHttpStatusCode();
-            if ($status_code >= 300) {
-                $response = stream_get_contents($this->primary_handler);
-                //$error_message = "Request to openrouterjson connector failed: {$status_line}.\nResponse body: {$response}";
-                $error_message = "Request to openrouterjson connector failed: {$status_code}.\n Response body: {$response}.\n model: {$this->_model}";
-                trigger_error($error_message, E_USER_WARNING);
-
-                if ($GLOBALS["db"]) {
-                    $GLOBALS["db"]->insert(
-                    'audit_request',
-                        array(
-                            'request' => json_encode($data),
-                            'result' => $error_message,
-                            'connector'=>$this->name,
-                            'url'=>$this->_url
-                        ));
-                }
-
-                $this->close();
-                $this->primary_handler=false;
-                return null;
-            } else  {
-                // Will do later
-                /*
-                if ($GLOBALS["db"]) {
-                    $GLOBALS["db"]->insert(
-                    'audit_request',
-                    array(
-                        'request' => json_encode($data),
-                        'result' => "Ok",
-                        'connector'=>$this->name,
-                        'url'=>$this->_url
-                    ));
-                }
-                */
-            }
         }
 
-        $this->_dataSent=json_encode($data);    // Will use this data in tokenizer.
-        $this->_rawbuffer="";
-        file_put_contents(__DIR__."/../log/output_from_llm.log","\n== ".date(DATE_ATOM)." START\n\n", FILE_APPEND);
+        if (!$this->primary_handler) {
+            $error = error_get_last();
+            $errMsg = isset($error['message']) ? $error['message'] : 'fopen returned false';
+            logMessage("Stream Open Fail [{$this->name}:{$herikaName}]: {$errMsg}");
+            if (isset($http_response_header) && is_array($http_response_header)) {
+                logMessage("HTTP Headers on fail: " . implode("\n", $http_response_header));
+            }
+            return null;
+        }
+
         return true;
-
-
     }
 
     public function send($url, $context) {
@@ -963,125 +884,192 @@ class openrouterjsoncached
     }
     
 
-    public function process()
-    {
+    public function process() {
         global $alreadysent;
+        $herikaName = isset($GLOBALS["HERIKA_NAME"]) ? $GLOBALS["HERIKA_NAME"] : 'default_herika';
 
-        static $numOutputTokens=0;
+        if ($this->isDone())
+            return "";
 
-        if (!isset($GLOBALS["patch_openrouter_timeout"]))
-            $GLOBALS["patch_openrouter_timeout"]=time();
-
-        $buffer = "";
-        $totalBuffer = "";
-        $mangledBuffer = "";
-        $finalData = "";
-
-        if ($this->isDone()) {
-            if (!$this->_buffer || empty(trim($this->_buffer))) {
-                $line = "";    
-                Logger::warn("LLM didn't output anything");
-            }
-        } else {
-            if ((time()-$GLOBALS["patch_openrouter_timeout"])>60) {
-                $this->_rawbuffer.="Error, timeout when receiving data from LLM";
-                Logger::error("Error, timeout when receiving data from LLM");
-                $this->_forcedClose=true;
-                return -1;
-            }
-            $line = fgets($this->primary_handler);
-        }
-        
-        file_put_contents(__DIR__."/../log/debugStream.log", $line, FILE_APPEND);
-        $this->_rawbuffer.=$line;
-        
-        // Check for error response
-        if (strpos($line, '"error"') !== false) {
-            Logger::error("Error response from LLM: $line");
-            return -1;
-        }
-        
-        $data=json_decode(substr($line, 6), true);
-
-        if ($this->_is_reasoning)
-            $buffer_preamble=4096; // some reasoning models output CoT part before JSON
-        elseif ($this->_websearch)
-            $buffer_preamble=256; 
-        else
-            $buffer_preamble=64; //was 10, 10 is not enough, some LLMs output a prefix tag/markup before JSON or "here is your JSON ..."
-
-        if (isset($data["choices"][0]["delta"]["content"])) {
-            if (strlen(($data["choices"][0]["delta"]["content"]))>0) {
-                $buffer.=$data["choices"][0]["delta"]["content"];
-                $this->_buffer.=$data["choices"][0]["delta"]["content"];
-                // Check to see if we've received something that looks like it starts with a JSON object
-                if (strlen($this->_buffer)>$buffer_preamble && strpos($this->_buffer, '{') === false) { 
-                    Logger::error("{$this->name} Error decoding JSON from LLM {$this->_model} output: can't find JSON start mark after reading {$buffer_preamble} characters. LLM didn't output proper JSON object or there is a long non-JSON preamble. url:{$this->_url} buffer:{$this->_buffer} ");
-                    return -1;
-                }
-
-            }
-
-            $totalBuffer.=$data["choices"][0]["delta"]["content"];
-
-            $this->_lastStreamedObject=$data;
-        }
-        
-        if (isset($GLOBALS["PATCH"]["PREAPPEND"])) {
-            $this->_buffer=$GLOBALS["PATCH"]["PREAPPEND"];
-            unset($GLOBALS["PATCH"]["PREAPPEND"]);
-        }
-        
-        $buffer="";
-        if (!empty($this->_buffer))
-            $finalData=__jpd_decode_lazy($this->_buffer, true);
-            if (is_array($finalData)) {
-                
-                
-                if (isset($finalData[0])&& is_array($finalData[0]))
-                    $finalData=$finalData[0];
-                
-                if (isset($finalData["message"])) {
-                    // Check first if action was issued
-                    if (is_array($finalData)&&isset($finalData["action"])) {
-                        if (($finalData["action"]=="Inspect")&&(!empty($finalData["target"]))) {
-                            return "";
-                            
-                        }
-                        
-                    } 
-                    
-                    if (is_array($finalData)&&isset($finalData["message"])) {
-                        if (is_array($finalData["message"]))
-                            $finalData["message"]=implode(",",$finalData["message"]);
-                        
-                        $mangledBuffer = str_replace($this->_extractedbuffer, "", $finalData["message"]);
-                        $this->_extractedbuffer=$finalData["message"];
-                        if (isset($finalData["listener"])) {
-                            if (isset($finalData["action"])&&($finalData["action"]=="Talk")&& lazyEmpty($finalData["listener"]) && !lazyEmpty($finalData["target"]))
-                                $GLOBALS["SCRIPTLINE_LISTENER"]=$finalData["target"];
-                            else
-                                $GLOBALS["SCRIPTLINE_LISTENER"]=$finalData["listener"];
-                        }
-                        
-                        if (isset($finalData["lang"])) {
-                            $GLOBALS["LLM_LANG"]=$finalData["lang"];
-                        }
-                        
-                        if (isset($finalData["mood"])) {
-                            $GLOBALS["SCRIPTLINE_ANIMATION"]=GetAnimationHex($finalData["mood"]);
-                            $GLOBALS["SCRIPTLINE_EXPRESSION"]=GetExpression($finalData["mood"]);
-                        }
-                        
-                        // Store the entire response for TTS systems that need additional data like emotions
-                        $GLOBALS["LAST_LLM_RESPONSE"] = $finalData;
+        $line = @fgets($this->primary_handler);
+        if ($line === false) {
+            if (feof($this->primary_handler)) {
+                // Stream ended - flush remaining simple format content if any
+                if ($this->_responseFormat === 'simple') {
+                    $flushed = $this->_flushRemainingSimpleFormat();
+                    if (!empty($flushed)) {
+                        return $flushed;
                     }
                 }
-                
-            } else
-                $buffer="";
-        
-        return $mangledBuffer;
+                return "";
+            } else {
+                $error = error_get_last();
+                $errMsg = isset($error['message']) ? $error['message'] : 'fgets error';
+                logMessage("Read Err [{$this->name}:{$herikaName}]: {$errMsg}");
+                $this->_rawbuffer .= "\nRead Err: {$errMsg}\n";
+                $this->_forcedClose = true;
+                return $errMsg;
+            }
+        }
+
+        try {
+            @file_put_contents(__DIR__ . "/../log/debugStream.log", $line, FILE_APPEND | LOCK_EX);
+        } catch (Exception $e) {
+        }
+
+        $this->_rawbuffer .= $line;
+        $buffer = "";
+
+        if (strpos($line, 'data: ') === 0) {
+            $jsonData = trim(substr($line, 6));
+            if ($jsonData === '[DONE]') {
+                // Stream ended with explicit DONE marker - flush remaining simple format content if any
+                if ($this->_responseFormat === 'simple') {
+                    $flushed = $this->_flushRemainingSimpleFormat();
+                    if (!empty($flushed)) {
+                        return $flushed;
+                    }
+                }
+                return "";
+            }
+
+            if (!empty($jsonData)) {
+                $data = json_decode($jsonData, true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($data)) {
+                    // Handle Anthropic format
+                    if (isset($data['type'])) {
+                        switch ($data['type']) {
+                            case 'content_block_delta':
+                                if (isset($data['delta']['type']) && $data['delta']['type'] === 'text_delta' &&
+                                    isset($data['delta']['text'])) {
+                                    $buffer = $data['delta']['text'];
+                                    $this->_buffer .= $buffer;
+                                }
+                                break;
+
+                            case 'content_block_start':
+                                if (isset($data['content_block']['type']) && $data['content_block']['type'] === 'tool_use') {
+                                    $this->_jsonResponsesEncoded[] = json_encode($data);
+                                }
+                                break;
+
+                            case 'message_delta':
+                                if (isset($data['delta']['stop_reason']) && $data['delta']['stop_reason'] !== null) {
+                                    logMessage("[{$this->name}:{$herikaName}] Stop (delta): " . $data['delta']['stop_reason']);
+                                    $this->_forcedClose = true;
+                                }
+                                break;
+
+                            case 'message_stop':
+                                logMessage("[{$this->name}:{$herikaName}] Stop (message_stop). Usage:" .
+                                    (isset($data['message']['usage']) ? json_encode($data['message']['usage']) : 'N/A'));
+
+                                // Log cache efficiency
+                                if (isset($data['message']['usage'])) {
+                                    $usage = $data['message']['usage'];
+                                    $cacheRead = isset($usage['cache_read_input_tokens']) ? $usage['cache_read_input_tokens'] : 0;
+                                    $cacheCreate = isset($usage['cache_creation_input_tokens']) ? $usage['cache_creation_input_tokens'] : 0;
+                                    $normalInput = isset($usage['input_tokens']) ? $usage['input_tokens'] : 0;
+                                    $totalConsideredInput = $cacheRead + $cacheCreate + $normalInput;
+                                    $efficiency = ($totalConsideredInput > 0) ? round(($cacheRead / $totalConsideredInput * 100), 1) : 0;
+                                    $logPerfEntry = sprintf(
+                                        "[%s] CACHE_PERF %s: Read:%d Create:%d New:%d Total:%d Efficiency:%.1f%%\n",
+                                        date(DATE_ATOM),
+                                        $herikaName,
+                                        $cacheRead,
+                                        $cacheCreate,
+                                        $normalInput,
+                                        $totalConsideredInput,
+                                        $efficiency
+                                    );
+                                    @file_put_contents(__DIR__ . DIRECTORY_SEPARATOR . "_cached_perf.log", $logPerfEntry, FILE_APPEND);
+                                }
+
+                                // Flush remaining simple format content before closing
+                                if ($this->_responseFormat === 'simple') {
+                                    $flushed = $this->_flushRemainingSimpleFormat();
+                                    if (!empty($flushed)) {
+                                        return $flushed;
+                                    }
+                                }
+
+                                $this->_forcedClose = true;
+                                break;
+
+                            case 'error':
+                                $eM = print_r((isset($data['error']) ? $data['error'] : $data), true);
+                                logMessage("Stream Err (Anthropic): {$eM}");
+                                $this->_rawbuffer .= "\nErr (Anthropic):{$eM}\n";
+                                $this->_forcedClose = true;
+                                return $eM;
+
+                            case 'ping':
+                                break;
+
+                            default:
+                                logMessage("[{$this->name}:{$herikaName}] Unhandled Anthropic Type: " . $data['type']);
+                                break;
+                        }
+                    }
+                    // Handle OpenAI format
+                    elseif (isset($data["choices"][0]["delta"])) {
+                        if (isset($data["choices"][0]["delta"]["content"])) {
+                            $buffer = $data["choices"][0]["delta"]["content"];
+                            $this->_buffer .= $buffer;
+                        }
+
+                        if (isset($data["choices"][0]["delta"]["tool_calls"])) {
+                            $this->_jsonResponsesEncoded[] = json_encode($data);
+                        }
+
+                        if (isset($data["choices"][0]["finish_reason"]) && $data["choices"][0]["finish_reason"] !== null) {
+                            logMessage("[{$this->name}:{$herikaName}] Stop (choice): " . $data["choices"][0]["finish_reason"]);
+
+                            // Flush remaining simple format content before closing
+                            if ($this->_responseFormat === 'simple') {
+                                $flushed = $this->_flushRemainingSimpleFormat();
+                                if (!empty($flushed)) {
+                                    return $flushed;
+                                }
+                            }
+
+                            $this->_forcedClose = true;
+                        }
+
+                        $this->_lastStreamedObject = $data;
+                    }
+                    // Generic error
+                    elseif (isset($data['error'])) {
+                        $eM = print_r($data['error'], true);
+                        logMessage("Stream Err (Generic): {$eM}");
+                        $this->_rawbuffer .= "\nErr (Generic):{$eM}\n";
+                        $this->_forcedClose = true;
+                        return $eM;
+                    }
+                } else {
+                    logMessage("JSON Decode Err [{$this->name}:{$herikaName}]: " . json_last_error_msg());
+                }
+            }
+        } elseif (trim($line) === "event: message_stop") {
+            logMessage("[{$this->name}:{$herikaName}] Explicit stream end event received.");
+
+            // Flush remaining simple format content before closing
+            if ($this->_responseFormat === 'simple') {
+                $flushed = $this->_flushRemainingSimpleFormat();
+                if (!empty($flushed)) {
+                    return $flushed;
+                }
+            }
+
+            $this->_forcedClose = true;
+        }
+
+        // Parse and return content based on format
+        if (!empty($buffer)) {
+            return $this->_parseAndReturnContent();
+        }
+
+        return "";
     }
 
     // ================================================================================
@@ -1403,61 +1391,91 @@ class openrouterjsoncached
     // ================================================================================
 
     // Method to close the data processing operation
-    public function close($callName='')
-    {
+    public function close() {
         if ($this->primary_handler) {
-            fclose($this->primary_handler);
+            @fclose($this->primary_handler);
+            $this->primary_handler = null;
         }
-        // Use callName just for logging purposes.
-        if (empty($callName))
-            $callName=$this->name;
-        else
-            $callName=$this->name."/".$callName;
 
-        $json_response=$this->_lastStreamedObject;
+        $herikaName = isset($GLOBALS["HERIKA_NAME"]) ? $GLOBALS["HERIKA_NAME"] : 'default_herika';
 
-        if (!isset($json_response["usage"]))
-            $json_response["usage"]=[];
-        
-        if ($json_response) {
-                if ($GLOBALS["db"]) {
-                    $GLOBALS["db"]->insert(
-                    'audit_request',
-                        array(
-                            'request' => json_encode($this->_dataSent),
-                            'result' => "Ok",
-                            'usage'=>json_encode($json_response["usage"]),
-                            'connector'=>$callName,
-                            'url'=>$this->_url
-                        ));
-                }
-                
+        try {
+            $proc = isset($this->_buffer) ? $this->_buffer : '<empty>';
+            $jsonResponses = isset($this->_jsonResponsesEncoded) && is_array($this->_jsonResponsesEncoded) ?
+                implode("\n", $this->_jsonResponsesEncoded) : "<no JSON responses>";
+
+            $logContent = sprintf(
+                "Processed Text:\n%s\n\nJSON Responses:\n%s\n\n[%s] [%s:%s] END STREAM\n==\n",
+                $proc,
+                $jsonResponses,
+                date(DATE_ATOM),
+                $this->name,
+                $herikaName
+            );
+
+            @file_put_contents(__DIR__ . "/../log/output_from_llm.log", $logContent, FILE_APPEND | LOCK_EX);
+        } catch (Exception $e) {
+            logMessage("[{$this->name}:{$herikaName}] Close Log Err: " . $e->getMessage());
         }
-        else {
-                if ($GLOBALS["db"]) {
-                    $GLOBALS["db"]->insert(
-                    'audit_request',
-                        array(
-                            'request' => json_encode($this->_dataSent),
-                            'result' => "ERROR|INVALID JSON RESPONSE",
-                            'connector'=>$this->name,
-                            'url'=>$this->_url
-                        ));
-                }
-        }
-        // Write the buffer to the log file without timestamp separators
-        file_put_contents(__DIR__."/../log/output_from_llm.log", $this->_buffer . "\n", FILE_APPEND);
-        file_put_contents(__DIR__."/../log/output_from_llm.log","\n== ".date(DATE_ATOM)." END\n\n", FILE_APPEND);
-        return $this->_buffer;
+
+        $this->_rawbuffer = "";
+        $this->_forcedClose = false;
+
+        return "";
     }
 
    
 
-    // Method to close the data processing operation
+    // Method to process actions from LLM response - supports both JSON and simple formats
     public function processActions()
     {
         global $alreadysent;
+        $this->_commandBuffer = isset($this->_commandBuffer) ? $this->_commandBuffer : array();
+        $herikaName = isset($GLOBALS["HERIKA_NAME"]) ? $GLOBALS["HERIKA_NAME"] : 'default_herika';
 
+        logMessage("[{$this->name}:{$herikaName}] processActions: responseFormat={$this->_responseFormat}");
+
+        // Handle simple format action processing
+        if ($this->_responseFormat === 'simple') {
+            $parsed = extractSimpleFormatFromBuffer(
+                $this->_buffer,
+                $this->_includeMood,
+                $this->_includeListener,
+                $this->_includeActions,
+                $this->_includeTarget
+            );
+
+            if ($parsed['found'] && $this->_includeActions && !empty($parsed['action'])) {
+                $action = validateActionName($parsed['action']);
+                $target = $this->_includeTarget && !empty($parsed['target']) ? $parsed['target'] : $this->_defaultTarget;
+                $character = $herikaName;
+
+                $commandKey = md5("{$character}|command|{$action}@{$target}\r\n");
+
+                if (!isset($alreadysent[$commandKey]) || empty($alreadysent[$commandKey])) {
+                    $functionCodeName = function_exists('getFunctionCodeName') ? getFunctionCodeName($action) : $action;
+                    $functionCodeName = empty($functionCodeName) ? $action : $functionCodeName;
+
+                    $commandString = "{$character}|command|{$functionCodeName}@{$target}\r\n";
+                    $this->_commandBuffer[] = $commandString;
+                    $alreadysent[$commandKey] = $commandString;
+
+                    logMessage("[{$this->name}:{$herikaName}] Generated command from simple format: {$commandString}");
+                }
+            }
+
+            $this->_jsonResponsesEncoded = array();
+
+            if (!empty($this->_commandBuffer)) {
+                logMessage("[{$this->name}:{$herikaName}] Final Command Buffer: " . implode(", ", $this->_commandBuffer));
+            } else {
+                logMessage("[{$this->name}:{$herikaName}] No commands generated.");
+            }
+
+            return empty($this->_commandBuffer) ? array() : $this->_commandBuffer;
+        }
+
+        // JSON format action processing (CHIM 2.2 style with multi-param support)
         if ($this->_functionName) {
             Logger::info("Old function scheme");
             $parameterArr = json_decode($this->_parameterBuff, true);
@@ -1592,279 +1610,12 @@ class openrouterjsoncached
     public function setDone()
     {
         $this->_forcedClose=true;
-        
     }
 
-    public function fast_request($contextData, $customParms,$callName='')
-    {
-        
-        $this->init_connector($customParms);
-        
-        if (empty($callName))
-            $callName=$this->name;
-        else
-            $callName=$this->name."/".$callName;
-
-
-        $MAX_TOKENS=((isset($GLOBALS["CONNECTOR"][$this->name]["max_tokens"]) ? $GLOBALS["CONNECTOR"][$this->name]["max_tokens"] : 48)+0);
-
-        $temperature = floatval(($GLOBALS["CONNECTOR"][$this->name]["temperature"]) ? : 0.7);
-        if ($temperature < 0.0) $temperature = 0.0;
-        else if ($temperature > 2.0) $temperature = 2.0; 
-
-        $presence_penalty = floatval(($GLOBALS["CONNECTOR"][$this->name]["presence_penalty"]) ? : 0.0);
-        if ($presence_penalty < -2.0) $presence_penalty = -2.0;
-        else if ($presence_penalty > 2.0) $presence_penalty = 2.0; 
-
-        $frequency_penalty = floatval(($GLOBALS["CONNECTOR"][$this->name]["frequency_penalty"]) ? : 0.0); 
-        if ($frequency_penalty < -2.0) $frequency_penalty = -2.0;
-        else if ($frequency_penalty > 2.0) $frequency_penalty = 2.0; 
-
-        $repetition_penalty = floatval(($GLOBALS["CONNECTOR"][$this->name]["repetition_penalty"]) ? : 0.0);
-        if ($repetition_penalty < 0.0) $repetition_penalty = 0.0;
-        else if ($repetition_penalty > 2.0) $repetition_penalty = 2.0; 
-
-        $top_p = floatval(($GLOBALS["CONNECTOR"][$this->name]["top_p"]) ? : 1.0);
-        if ($top_p > 1) $top_p = 1.0;
-        else if ($top_p < 0.0) $top_p = 0.0; 
-
-        $min_p = floatval(($GLOBALS["CONNECTOR"][$this->name]["min_p"]) ? : 0.0);
-        if ($min_p > 1) $min_p = 1.0;
-        else if ($min_p < 0.0) $min_p = 0.0; 
-
-        $top_a = floatval(($GLOBALS["CONNECTOR"][$this->name]["top_a"]) ? : 0.0);
-        if ($top_a > 1) $top_a = 1.0;
-        else if ($top_a < 0.0) $top_a = 0.0; 
-
-        $top_k = intval(($GLOBALS["CONNECTOR"][$this->name]["top_k"]) ? : 0);
-        if ($top_k < 0) $top_k = 0; 
-
-        if (isset($customParms["MAX_TOKENS"])) {
-            $MAX_TOKENS=intval($customParms["MAX_TOKENS"]);
-            unset($customParms["MAX_TOKENS"]);
-        }
-        if (isset($GLOBALS["FORCE_MAX_TOKENS"])) {
-            $MAX_TOKENS=intval($GLOBALS["FORCE_MAX_TOKENS"]);
-        }
-        
-        $data = array(
-            'model' => $this->_model,
-            'messages' => $contextData,
-            'stream' => false, 
-            'usage'=> ["include"=>true],
-            'max_tokens' => $MAX_TOKENS,
-            'temperature' => $temperature, 
-            'top_k' => $top_k,
-            'top_p' => $top_p, 
-            'min_p' => $min_p,
-            'top_a' => $top_a,
-            'presence_penalty' => $presence_penalty, 
-            'frequency_penalty' => $frequency_penalty, 
-            'repetition_penalty' => $repetition_penalty,
-            'stop'=>[
-                    'USER',
-                ],
-            'transforms'=>[]
-        );
-
-        if (isset($GLOBALS["CONNECTOR"][$this->name]["stop"])&&sizeof($GLOBALS["CONNECTOR"][$this->name]["stop"])>0) {
-            $data["stop"]=$GLOBALS["CONNECTOR"][$this->name]["stop"];
-        }
-        // Override
-
-       
-
-        if (isset($customParms["MAX_TOKENS"])) {
-            if ($customParms["MAX_TOKENS"]==0) {
-                unset($data["max_tokens"]);
-            } elseif ($customParms["MAX_TOKENS"]) {
-                $data["max_tokens"]=$customParms["MAX_TOKENS"];
-            }
-        }
-
-        if (isset($GLOBALS["FORCE_MAX_TOKENS"])) {
-            if ($GLOBALS["FORCE_MAX_TOKENS"]==0) {
-                unset($data["max_tokens"]);
-            } else {
-                $data["max_tokens"]=$GLOBALS["FORCE_MAX_TOKENS"];
-
-            }
-        }
-        
-
-        // Mistral AI API does not support penalty params
-        if ($this->_is_mistral_ai) {
-            unset($data["presence_penalty"]); 
-            unset($data["frequency_penalty"]);
-        } 
-        
-        if ($this->_is_grok) { //Argument not supported on this model: stop
-            unset($data["stop"]); 
-        }  
-
-        if ($this->_is_reasoning) { // add parameter to hide <think> content
-            $data["reasoning"] = array ('exclude' => true,'enabled'=>false); // Use reasoning but don't include it in the response
-            //$data["reasoning"] = array ('exclude' => true, 'effort' => 'low'); // reduce reasoning tokens - OpenAI
-            //$data["reasoning"] = array ('exclude' => true, 'max_tokens' => 64 ); // reduce reasoning tokens - Anthropic 
-            //Logger::debug("reasoning " . $this->_model);
-            if (!(stripos($this->_model, "qwen3-") === false)) {//qwen3
-                $data["enable_thinking"] = false;
-            }       
-            if (stripos($this->_model, "grok-3-mini") != false) {//grok-3-mini needs reasoning cand cannot be disabled
-                $data["reasoning"]["enabled"] = true;
-            }        
-    }
-        
-        if ($this->_is_openai) {
-            // OpenAI models use max_completion_tokens
-            $data['max_completion_tokens'] = $MAX_TOKENS;
-            unset($data['max_tokens']); 
-            if ($this->_is_reasoning) {
-                $data["reasoning"] = array ('exclude' => true, 'effort' => 'low'); // reduce reasoning tokens - OpenAI
-            }
-        }
-
-        if ($MAX_TOKENS<1) {
-            $data["max_tokens"]+=0;
-
-            unset($data["max_completion_tokens"]); 
-            unset($data["max_tokens"]); 
-
-        }
-
-        if (!empty($GLOBALS["CONNECTOR"]["openrouterjson"]["PROVIDER"])) {
-            $providers=explode(",",$GLOBALS["CONNECTOR"]["openrouterjson"]["PROVIDER"]);
-            $data["provider"]=["order"=>$providers];
-        } 
-
-        if (isset($this->_fallback_models) && (is_array($this->_fallback_models)) && (count($this->_fallback_models) > 0)) {
-            $data['models'] = $this->_fallback_models;
-        }
-
-
-        if (isset($this->_providers_sort) && (in_array($this->_providers_sort,['price','throughput','latency']))) {
-            $data['provider']['sort'] = $this->_providers_sort; 
-        }
-
-        if (isset($this->_providers2ignore) && (is_array($this->_providers2ignore)) && (count($this->_providers2ignore) > 0)) {
-            $data['provider']['ignore'] = $this->_providers2ignore; 
-        }
-
-        if (isset($this->_provider_quantizations) && (is_array($this->_provider_quantizations)) && (count($this->_provider_quantizations) > 0)) {
-            $data['provider']['quantizations'] = $this->_provider_quantizations; 
-        }
-
-        if (isset($this->_provider_max_price) && (is_array($this->_provider_max_price)) && (count($this->_provider_max_price) == 2)) {
-            $json_price = json_encode($this->_provider_max_price); 
-            if (isset($json_price))
-                $data['provider']['max_price'] = json_decode($json_price);
-        }
-        
-        
-        foreach ($customParms as $parm=>$value) {
-            $data[$parm]=$value;
-        }
-        
-        // Add Google safety settings if block_none is enabled in metadata (for Google models via OpenRouter)
-        if (isset($GLOBALS["CONNECTOR"][$this->name]["block_none"]) && $GLOBALS["CONNECTOR"][$this->name]["block_none"]) {
-            // Only add safety settings if this is a Google/Gemini model
-            if (preg_match('/google|gemini/i', $this->_model)) {
-                $data["safety_settings"] = [
-                    ["category" => "HARM_CATEGORY_HARASSMENT", "threshold" => "BLOCK_NONE"],
-                    ["category" => "HARM_CATEGORY_HATE_SPEECH", "threshold" => "BLOCK_NONE"],
-                    ["category" => "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold" => "BLOCK_NONE"],
-                    ["category" => "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold" => "BLOCK_NONE"]
-                ];
-            }
-        }
-        
-        $data["transforms"]=[];
-
-        $GLOBALS["DEBUG_DATA"]["full"]=($data);
-     
-        
-        $headers = array(
-            'Content-Type: application/json',
-            "Authorization: Bearer {$GLOBALS["CONNECTOR"][$this->name]["API_KEY"]}",
-            "HTTP-Referer:  https://dwemerdynamics.com/",
-            "X-Title: Dwemer Dynamics"
-        );
-
-        $options = array(
-            'http' => array(
-                'method' => 'POST',
-                'header' => implode("\r\n", $headers),
-                'content' => json_encode($data),
-                'timeout' => ($GLOBALS["HTTP_TIMEOUT"]) ?: 30
-            )
-        );
-
-        $context = stream_context_create($options);
-        
-        file_put_contents(__DIR__."/../log/context_sent_to_llm_fast.log",date(DATE_ATOM)."\n=\n".var_export($data,true)."\n=\n", FILE_APPEND);
-
-        try {
-            $json_response = file_get_contents($this->_url, false, $context);
-            if ($json_response === false) {
-               $error = error_get_last();
-              error_log("Error fetching response from URL: " . $this->_url . ". Error: " . $error['message']);
-            }
-        } catch (Exception $e) {
-            error_log("Exception occurred while fetching response from URL: " . $this->_url . ". Exception: " . $e->getMessage());
-            $json_response = false;
-        }
-
-        
-        
-        file_put_contents(__DIR__."/../log/output_from_llm_fast.log",date(DATE_ATOM)."\n=\n{$json_response}\n=\n", FILE_APPEND);
-
-        if ($json_response) {
-            $text_response=json_decode($json_response,true);
-           
-            if (is_valid_array($text_response)) {
-                if ($GLOBALS["db"]) {
-                    $GLOBALS["db"]->insert(
-                    'audit_request',
-                        array(
-                            'request' => json_encode($data),
-                            'result' => "Ok",
-                            'usage'=>json_encode($text_response["usage"]),
-                            'connector'=>$callName,
-                            'url'=>$this->_url
-                        ));
-                }
-                return $text_response["choices"][0]["message"]["content"];    
-            }
-            else {
-                if ($GLOBALS["db"]) {
-                    $GLOBALS["db"]->insert(
-                    'audit_request',
-                        array(
-                            'request' => json_encode($data),
-                            'result' => "ERROR|INVALID JSON RESPONSE",
-                            'connector'=>$callName,
-                            'url'=>$this->_url
-                        ));
-                }
-                error_log("Error in openrouter request '$url':$json_response", 3);
-                return "";
-                
-            }
-            
-        } else {
-            if ($GLOBALS["db"]) {
-                $GLOBALS["db"]->insert(
-                'audit_request',
-                    array(
-                        'request' => json_encode($data),
-                        'result' => "ERROR|NO RESPONSE",
-                        'connector'=>$this->name,
-                        'url'=>$this->_url
-                    ));
-            }
-        }
-            
-    }
+    // NOTE: fast_request() is NOT available in the cached connector.
+    // This connector is streaming-only and designed for main conversation.
+    // For non-streaming requests (CORE_CONNECTOR_MEDIUMTERM, CORE_CONNECTOR_SUMMARY, etc.),
+    // use the standard openrouterjson connector instead.
 
 }
 
