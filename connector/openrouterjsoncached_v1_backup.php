@@ -4,15 +4,17 @@ $enginePath = dirname((__FILE__)) . DIRECTORY_SEPARATOR."..".DIRECTORY_SEPARATOR
 require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_functions.php");
 
 // Cached version of openrouterjson connector with Anthropic/OpenAI/Gemini cache support
-// Based on CHIM 2.2 architecture with additional caching and response format features
+// Based on CHIM 2.0 architecture with additional caching and response format features
 
 class openrouterjsoncached
 {
-    // Version tracking - update after making changes
-    const VERSION = 'OpenRouter Cache Connector v2.0 for CHIM 2.2 | 2026/01/28';
+    // ⚠️ IMPORTANT: Please update version number, date, and CHIM version after making changes
+    const VERSION = 'OpenRouter Cache Connector v1.4 for CHIM 2.0.3 | 2026/01/21';
+
     public $primary_handler;
     public $name;
 
+    // Core properties from base connector
     private $_functionName;
     private $_parameterBuff;
     private $_commandBuffer;
@@ -36,16 +38,13 @@ class openrouterjsoncached
     private $_providers2ignore;
     private $_provider_max_price;
     private $_url;
-    // Web search properties (CHIM 2.2 feature - NOT YET IMPLEMENTED in cached connector)
-    // TODO: Port web search detection/handling from openrouterjson.php if needed
     private $_websearch=false;
     private $_websearch_text="";
     private $_websearch_index=0;
     private $_webbackup_func=false;
     private $_remove_cot;
-    private $_disable_reasoning;
     private $_cot_tag_base;
-    private $_output_buffer; 
+    private $_output_buffer;
     private $_timeout;
     private $_is_grok;
     private $_lastStreamedObject;
@@ -65,20 +64,13 @@ class openrouterjsoncached
     private $_lastReturnedLength;
     public $_jsonResponsesEncoded = array();
 
-    // Simple format parser state variables
+    // New simple format parser state variables (per design document)
     private $_reasoningState;
     private $_reasoningTagType;
     private $_metadataEnd;
     private $_sentencesSent;
     private $_metadataGroups;
-    private $_flushedPartial;
-
-    // Memory handling mode: 'accumulate' (dedupe) or 'fresh' (like regular connector)
-    private $_memoryMode;
-
-    // Cache invalidation mode: 'time_based' or 'sync_updates'
-    private $_cacheInvalidationMode;
-
+    private $_flushedPartial;  // Track if trailing partial was flushed at stream end
 
     public function __construct()
     {
@@ -100,7 +92,6 @@ class openrouterjsoncached
         $this->_is_streaming=true;
         $this->_is_reasoning=false;
         $this->_remove_cot=true;
-        $this->_disable_reasoning=true;
         $this->_cot_tag_base="think";
         $this->_output_buffer="";
         $this->_timeout=30;
@@ -126,7 +117,7 @@ class openrouterjsoncached
         $this->_lastReturnedLength = 0;
         $this->_jsonResponsesEncoded = array();
 
-        // Initialize simple format parser state
+        // Initialize new simple format parser state
         $this->_reasoningState = 'NORMAL';
         $this->_reasoningTagType = '';
         $this->_metadataEnd = -1;
@@ -134,143 +125,128 @@ class openrouterjsoncached
         $this->_metadataGroups = [];
         $this->_flushedPartial = false;
 
-        // Initialize new v2 settings
-        $this->_memoryMode = 'accumulate';  // 'accumulate' or 'fresh'
-        $this->_cacheInvalidationMode = 'time_based';  // 'time_based' or 'sync_updates'
-
         require_once(__DIR__."/__jpd.php");
         require_once(__DIR__."/openrouterjsoncached_helpers.php");
 
         logMessage("[{$this->name}] OpenRouter Cached Connector v" . self::VERSION . " initialized");
     }
 
+    // Public method to check if connector handles sentence splitting internally
+    // Used by data_functions.php to bypass MINIMUM_SENTENCE_SIZE check for simple format
+    public function handlesSentenceSplitting() {
+        return ($this->_responseFormat === 'simple');
+    }
 
+    // Utility methods
     private function isWebSearchInMessage($s_msg="") {
         $b_res = false;
         if (strlen($s_msg) > 7) {
             $i_pos = stripos($s_msg, "Skyrim search");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_msg, "Search Skyrim");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_msg, "Find knowledge in Skyrim");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_msg, "Search Elder Scrolls");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_msg, "Find knowledge in Elder Scrolls");
             $b_res = (!($i_pos === false));
         }
         return $b_res;
     }
 
-
-    private function isReasoningModel($s_model="") { //recognize a reasoning model that can hide <think> cot part with dedicated parameters
+    private function isReasoningModel($s_model="") {
         $b_res = false;
         if (strlen($s_model) > 0) {
-            $i_pos = stripos($s_model, "deepseek-r"); 
-            if ($i_pos === false) 
-                $i_pos = stripos($s_model, "qwq-32b"); 
-            if ($i_pos === false) 
+            $i_pos = stripos($s_model, "deepseek-r");
+            if ($i_pos === false)
+                $i_pos = stripos($s_model, "qwq-32b");
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "qwq-max");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "-thinking");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, ":thinking");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "-reasoning");
-            if ($i_pos === false) 
-                $i_pos = stripos($s_model, "grok-3-mini"); 
-            if ($i_pos === false) 
+            if ($i_pos === false)
+                $i_pos = stripos($s_model, "grok-3-mini");
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "sonar-deep-research");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "r1-1776");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "dolphin3.0-r1-mistral");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "aion-1.0");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "reka-flash-3");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "olympiccoder-");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "MAI-DS-R1");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "qwen3-235b-a22b");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "qwen3-30b-a3b");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "qwen3-32b");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "openai/o3");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "openai/o4");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "openai/o1");
-            if ($i_pos === false) 
-                $i_pos = stripos($s_model, "openai/gpt-oss-120b");
-            if ($i_pos === false) 
-                $i_pos = stripos($s_model, "openai/gpt-oss-20b");
-            if ($i_pos === false) 
-                $i_pos = stripos($s_model, "gpt-5-mini");
-            //openai/gpt-5-nano ???
-            if ($i_pos === false) { //openai/gpt-5
-                if (($s_model == "openai/gpt-5")) {
-                    $i_pos = 9;
-                }
-            }
             $b_res = (!($i_pos === false));
         }
         return $b_res;
     }
 
-    private function isOpenAIModel($s_model="") { //OpenAI models have different parameters
+    private function isOpenAIModel($s_model="") {
+        // Detects OpenAI reasoning models that require special parameter handling
+        // These models use max_completion_tokens and require parameter stripping
         $b_res = false;
         if (strlen($s_model) > 0) {
-            // OpenRouter models
+            // OpenRouter prefixed models
             $i_pos = stripos($s_model, "openai/o1");
-            if ($i_pos === false) 
-                $i_pos = stripos($s_model, "openai/gpt-5");
-            if ($i_pos === false) 
-                $i_pos = stripos($s_model, "openai/gpt-oss-120b");
-            if ($i_pos === false) 
-                $i_pos = stripos($s_model, "openai/gpt-oss-20b");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "openai/o3");
-            if ($i_pos === false) 
-                $i_pos = stripos($s_model, "openai/o4-mini");
-            // Nano-GPT models
-            if ($i_pos === false) 
+            if ($i_pos === false)
+                $i_pos = stripos($s_model, "openai/o4");
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "azure-o1");
-            if ($i_pos === false) 
+            if ($i_pos === false)
                 $i_pos = stripos($s_model, "azure-o3");
-            // OpenAI model names
-            if ($i_pos === false) { 
-                if (($s_model == "o1") || ($s_model == "o1-mini") || ($s_model == "o1-preview") || 
-                    ($s_model == "o3") || (strpos($s_model, "o3-mini") === 0) || (strpos($s_model, "o3-pro") === 0) || 
-                    (strpos($s_model, "o4-mini") === 0)) {
-                    $i_pos = 9;
+            if ($i_pos === false)
+                $i_pos = stripos($s_model, "azure-o4");
+
+            // Direct model names (o1, o3, o4 series)
+            if ($i_pos === false) {
+                if (($s_model == "o1") || ($s_model == "o1-mini") || ($s_model == "o1-preview") ||
+                    ($s_model == "o3") || (strpos($s_model, "o3-mini") === 0) || (strpos($s_model, "o3-pro") === 0) ||
+                    ($s_model == "o4") || (strpos($s_model, "o4-mini") === 0)) {
+                    $i_pos = 1;
                 }
             }
+
+            // GPT-5 series (but NOT gpt-5-chat)
+            if ($i_pos === false) {
+                if ((stripos($s_model, "gpt-5") !== false || stripos($s_model, "openai/gpt-5") !== false) &&
+                    stripos($s_model, "gpt-5-chat") === false) {
+                    // Matches: gpt-5, gpt-5-pro, gpt-5-codex, gpt-5-mini, gpt-5-nano, openai/gpt-5*
+                    // But NOT: gpt-5-chat
+                    $i_pos = 1;
+                }
+            }
+
             $b_res = (!($i_pos === false));
         }
-        //Logger::debug("[OPENROUTER] is openai $s_model / $i_pos ". ($b_res ? "Y" : "N") ); //debug
         return $b_res;
     }
 
-    /**
-     * Indicates whether this connector handles sentence splitting internally.
-     * Used by data_functions.php to bypass MINIMUM_SENTENCE_SIZE checks.
-     * Returns true only in simple format mode.
-     */
-    public function handlesSentenceSplitting() {
-        return ($this->_responseFormat === 'simple');
-    }
-
-    /**
-     * Detects models that ALWAYS have reasoning enabled (cannot be disabled).
-     * These models will always output reasoning tokens regardless of settings.
-     * Used in _openPart4 to always include reasoning configuration.
-     */
     private function isAlwaysReasoningModel($s_model="") {
+        // Detects models that ALWAYS have reasoning enabled (cannot be disabled)
+        // These models will always output reasoning tokens regardless of settings
         $b_res = false;
         if (strlen($s_model) > 0) {
             // OpenAI reasoning models (o1, o3, o4, gpt-5*)
@@ -278,7 +254,7 @@ class openrouterjsoncached
                 $b_res = true;
             }
 
-            // DeepSeek R1 variants (always reasons)
+            // DeepSeek R1 (older version, always reasons)
             if (!$b_res) {
                 $i_pos = stripos($s_model, "deepseek-r1");
                 if ($i_pos === false)
@@ -289,14 +265,27 @@ class openrouterjsoncached
         return $b_res;
     }
 
-    // ================================================================================
-    // OPEN METHOD - Split into 4 parts for caching support
-    // Part 1: Configuration and initialization
-    // Part 2: System prompt processing with caching
-    // Part 3: Dialogue history caching and cache control placement
-    // Part 4: Payload construction and API request
-    // ================================================================================
+    public function getHttpStatusCode() {
+        if (isset($GLOBALS['mockConnectorResponseMetaData'])) {
+            $responseInfo = call_user_func($GLOBALS['mockConnectorResponseMetaData']);
+        } else {
+            if (!is_resource($this->primary_handler)) {
+                logMessage("[{$this->name}] getHttpStatusCode: primary_handler is null or not a resource");
+                return null;
+            }
+            $responseInfo = stream_get_meta_data($this->primary_handler);
+        }
 
+        if (!isset($responseInfo['wrapper_data'][0])) {
+            return null;
+        }
+
+        $statusLine = $responseInfo['wrapper_data'][0];
+        preg_match('/\d{3}/', $statusLine, $matches);
+        return isset($matches[0]) ? intval($matches[0]) : null;
+    }
+
+    // Main open method - Part 1: Initialization and Configuration
     public function open($contextData, $customParms) {
         $start_time = microtime(true);
         require_once(__DIR__ . DIRECTORY_SEPARATOR . ".." . DIRECTORY_SEPARATOR . "functions" . DIRECTORY_SEPARATOR . "json_response.php");
@@ -306,24 +295,23 @@ class openrouterjsoncached
 
         logMessage("[{$this->name}:{$herikaName}] OPEN START: Received contextData with {$n_ctxsize} elements.");
 
-        // Load URL configuration
+        // Load configuration
         $this->_url = isset($GLOBALS["CONNECTOR"][$this->name]["url"]) ? $GLOBALS["CONNECTOR"][$this->name]["url"] : '';
         if (empty($this->_url)) {
             logMessage("{$this->name} connector - missing url!");
             return null;
         }
 
-        // Load basic configuration
         $MAX_TOKENS = intval(isset($GLOBALS["CONNECTOR"][$this->name]["max_tokens"]) ? $GLOBALS["CONNECTOR"][$this->name]["max_tokens"] : 4096);
         $this->_model = (isset($GLOBALS["CONNECTOR"][$this->name]["model"])) ? $GLOBALS["CONNECTOR"][$this->name]["model"] : 'anthropic/claude-3-haiku-20240307';
+
+        // Model can be overridden by custom params
         $this->_model = isset($customParms["model"]) ? $customParms["model"] : $this->_model;
 
-        // Caching configuration
         $max_dialogue_cache_size = intval(isset($GLOBALS["CONNECTOR"][$this->name]["max_dialogue_cache_context_size"]) ? $GLOBALS["CONNECTOR"][$this->name]["max_dialogue_cache_context_size"] : $n_ctxsize * 4);
         $customInstruction = isset($GLOBALS["CONNECTOR"][$this->name]["custom_system_instruction"]) ? $GLOBALS["CONNECTOR"][$this->name]["custom_system_instruction"] : '';
         $lastCustomInstruction = isset($GLOBALS["CONNECTOR"][$this->name]["custom_last_instruction"]) ? $GLOBALS["CONNECTOR"][$this->name]["custom_last_instruction"] : '';
 
-        // Reasoning/thinking configuration
         $toggleThinking = isset($GLOBALS["CONNECTOR"][$this->name]["toggle_thinking"]) ? $GLOBALS["CONNECTOR"][$this->name]["toggle_thinking"] : false;
         $thinkingTokens = isset($GLOBALS["CONNECTOR"][$this->name]["thinking_tokens"]) ? $GLOBALS["CONNECTOR"][$this->name]["thinking_tokens"] : 1000;
         $effort_level = isset($GLOBALS["CONNECTOR"][$this->name]["effort_level"]) ? $GLOBALS["CONNECTOR"][$this->name]["effort_level"] : "low";
@@ -335,18 +323,20 @@ class openrouterjsoncached
         $CONTEXTHISTORY = isset($GLOBALS['CONTEXT_HISTORY']) ? $GLOBALS['CONTEXT_HISTORY'] : 50;
         logMessage("CONTEXT HISTORY: $CONTEXTHISTORY");
 
-        // Dialogue cache configuration
+        // New configuration options for response format and content control
         $dialogue_cache_uncached_count = isset($GLOBALS["CONNECTOR"][$this->name]["dialogue_cache_uncached_count"])
             ? (int)$GLOBALS["CONNECTOR"][$this->name]["dialogue_cache_uncached_count"]
             : 4;
 
-        // Response format configuration
         $this->_responseFormat = isset($GLOBALS["CONNECTOR"][$this->name]["response_format"])
             && in_array($GLOBALS["CONNECTOR"][$this->name]["response_format"], ['json', 'simple'])
             ? $GLOBALS["CONNECTOR"][$this->name]["response_format"]
             : 'json';
 
-        // Field inclusion configuration
+        // DEBUG: Log what response format is being loaded
+        error_log("[{$this->name}] CRITICAL DEBUG - Response Format Setting: {$this->_responseFormat}");
+        error_log("[{$this->name}] CRITICAL DEBUG - Raw metadata value: " . ($GLOBALS["CONNECTOR"][$this->name]["response_format"] ?? 'NOT SET'));
+
         $this->_includeActions = (isset($GLOBALS["FUNCTIONS_ARE_ENABLED"]) && $GLOBALS["FUNCTIONS_ARE_ENABLED"])
             && (isset($GLOBALS["CONNECTOR"][$this->name]["include_actions_list"])
                 ? (bool)$GLOBALS["CONNECTOR"][$this->name]["include_actions_list"]
@@ -364,29 +354,17 @@ class openrouterjsoncached
             ? (bool)$GLOBALS["CONNECTOR"][$this->name]["include_listener_requirement"]
             : true;
 
-        // Quality prompt setting (defaults to true for advanced models)
+        // Minimize quality prompt setting (defaults to true for advanced models)
         $minimizeQualityPrompt = isset($GLOBALS["CONNECTOR"][$this->name]["minimize_quality_prompt"])
             ? (bool)$GLOBALS["CONNECTOR"][$this->name]["minimize_quality_prompt"]
             : true;
-
-        // Memory mode configuration (NEW in v2)
-        $this->_memoryMode = isset($GLOBALS["CONNECTOR"][$this->name]["memory_mode"])
-            ? $GLOBALS["CONNECTOR"][$this->name]["memory_mode"]
-            : 'accumulate';
-
-        // Cache invalidation mode (NEW in v2)
-        // NOTE: 'sync_updates' mode is not yet fully implemented - falls back to 'time_based'
-        // TODO: Implement sync logic to invalidate cache when dynamic profile/middle-term memory updates
-        $this->_cacheInvalidationMode = isset($GLOBALS["CONNECTOR"][$this->name]["cache_invalidation_mode"])
-            ? $GLOBALS["CONNECTOR"][$this->name]["cache_invalidation_mode"]
-            : 'time_based';
 
         // Enforce dependency: target required if actions enabled
         if ($this->_includeActions) {
             $this->_includeTarget = true;
         }
 
-        logMessage("Response Format Config: format={$this->_responseFormat}, actions={$this->_includeActions}, mood={$this->_includeMood}, target={$this->_includeTarget}, listener={$this->_includeListener}, memoryMode={$this->_memoryMode}");
+        logMessage("Response Format Config: format={$this->_responseFormat}, actions={$this->_includeActions}, mood={$this->_includeMood}, target={$this->_includeTarget}, listener={$this->_includeListener}, uncached={$dialogue_cache_uncached_count}, minimizeQuality={$minimizeQualityPrompt}");
 
         // Continue to Part 2...
         return $this->_openPart2($contextData, $customParms, $herikaName, $MAX_TOKENS, $max_dialogue_cache_size,
@@ -399,31 +377,31 @@ class openrouterjsoncached
                                  $customInstruction, $lastCustomInstruction, $toggleThinking, $thinkingTokens,
                                  $effort_level, $CONTEXTHISTORY, $dialogue_cache_uncached_count, $start_time, $minimizeQualityPrompt = true) {
 
-        // Cache file names include response format to separate caches
+        // BUG#2 FIX: Include response format in cache filename so different formats use different cache files
         $cacheSystemFile = "system_cache_{$this->_responseFormat}_{$herikaName}.tmp";
         $cacheCombinedDialogueFile = "combined_dialogue_cache_{$this->_responseFormat}_{$herikaName}.tmp";
         $cacheControlType = ["type" => "ephemeral", "ttl" => "1h"];
 
-        // Build actions prefix
+        // Build actions and response format instruction
         if (isset($GLOBALS["PATCH_PROMPT_ENFORCE_ACTIONS"]) && $GLOBALS["PATCH_PROMPT_ENFORCE_ACTIONS"]) {
             $prefix = isset($GLOBALS["COMMAND_PROMPT_ENFORCE_ACTIONS"]) ? "{$GLOBALS["COMMAND_PROMPT_ENFORCE_ACTIONS"]}" : "";
 
-            // Filter quality instructions if minimize_quality_prompt is enabled
+            // When minimize_quality_prompt is enabled (true/default), filter out quality instruction phrases
+            // that conflict with the minimized approach (COMMAND_PROMPT_ENFORCE_ACTIONS should be for actions, not quality)
             if ($minimizeQualityPrompt && stripos($prefix, 'Provide variety') !== false) {
+                error_log("[{$this->name}] INFO: Filtering out 'Provide variety' phrase from COMMAND_PROMPT_ENFORCE_ACTIONS (minimize_quality_prompt is enabled)");
                 $prefix = "";
             }
         } else {
             $prefix = "";
         }
 
-        // Speech style reinforcement
         if (isset($GLOBALS["HERIKA_SPEECHSTYLE"]) && !empty($GLOBALS["HERIKA_SPEECHSTYLE"])) {
             $speechReinforcement = "Use #SpeechStyle.";
         } else {
             $speechReinforcement = "";
         }
 
-        // Zonos TTS support (from CHIM 2.2)
         $zonosTones = (isset($GLOBALS["TTSFUNCTION"]) && $GLOBALS["TTSFUNCTION"] == "zonos_gradio") ? " (Response tones are mandatory in the response)" : "";
 
         // Build actions list if enabled
@@ -434,11 +412,11 @@ class openrouterjsoncached
 
         // Build response format instruction based on format type
         $formatInstruction = "";
+        error_log("[{$this->name}] CRITICAL DEBUG - Building format instruction for: {$this->_responseFormat}");
 
         if ($this->_responseFormat === 'json') {
             $template = isset($GLOBALS["responseTemplate"]) ? $GLOBALS["responseTemplate"] : [];
 
-            // Remove fields not included
             if (!$this->_includeMood && is_array($template) && isset($template['mood'])) {
                 unset($template['mood']);
             }
@@ -454,6 +432,7 @@ class openrouterjsoncached
 
             $prefixPart = trim(implode(' ', array_filter([$prefix, $speechReinforcement], 'strlen')));
             $formatInstruction = "{$prefixPart} Use ONLY this JSON object to give your answer. Do not send any other characters outside of this JSON structure$zonosTones: " . json_encode($template);
+            error_log("[{$this->name}] CRITICAL DEBUG - JSON format instruction created");
         } else {
             $prefixPart = trim(implode(' ', array_filter([$prefix, $speechReinforcement], 'strlen')));
             $formatInstruction = buildSimpleFormatInstruction(
@@ -463,13 +442,15 @@ class openrouterjsoncached
                 $this->_includeTarget,
                 $prefixPart
             );
+            error_log("[{$this->name}] CRITICAL DEBUG - Simple format instruction created");
         }
 
         $actionsText = "";
         if (!empty($availableActions)) {
             $actionsText .= "\n" . $availableActions . "\n";
         }
-        // For JSON format, instruction goes in system message
+        // For simple format, format instruction goes with user prompt, not system
+        // For JSON format, it stays in system message
         if ($this->_responseFormat === 'json') {
             $actionsText .= $formatInstruction;
         }
@@ -490,7 +471,7 @@ class openrouterjsoncached
 
                 $systemContentCurrent = trim($systemContentString);
 
-                // Extract dynamic sections that change frequently (for reinsertion later)
+                // Extract dynamic sections that change frequently
                 $environmental = extract_and_remove_section($systemContentCurrent, 'Environmental Context');
                 $additional = extract_and_remove_section($systemContentCurrent, 'Additional Information');
                 $equipment = extract_any_subsection($systemContentCurrent, 'Equipment', true);
@@ -504,7 +485,7 @@ class openrouterjsoncached
                                      $combatStatus . "\n\n" . $arousal . "\n\n" . $equipment . "\n\n" .
                                      $appearance . "\n\n" . $cleanliness;
 
-                // Add custom system instruction
+                // Add custom system instruction before actions and format instruction (but after main system content)
                 $customInstructionPart = !empty($customInstruction) ? "\n" . $customInstruction : '';
                 $finalSend = $systemContentCurrent . $customInstructionPart . "\n" . $actionsText;
 
@@ -531,10 +512,8 @@ class openrouterjsoncached
                                  $CONTEXTHISTORY, $dialogue_cache_uncached_count, $start_time,
                                  $finalMessagesToSend, $cacheCombinedDialogueFile, $cacheControlType, $dynamicEnvironment, $formatInstruction) {
 
-        // Process dialogue history (non-system entries)
+        // Process dialogue history
         $contentTextToSend = [];
-        $memoryItems = [];  // For memory mode handling
-
         foreach ($contextData as $n => $element) {
             if (!isset($element))
                 continue;
@@ -553,14 +532,7 @@ class openrouterjsoncached
                 }
 
                 if (!empty(trim($contentString))) {
-                    $item = array('type' => 'text', 'text' => "$contentString");
-
-                    // Memory mode handling: if 'fresh' mode, separate memory items
-                    if ($this->_memoryMode === 'fresh' && strpos($contentString, '<memory>') !== false) {
-                        $memoryItems[] = $item;
-                    } else {
-                        $contentTextToSend[] = $item;
-                    }
+                    $contentTextToSend[] = array('type' => 'text', 'text' => "$contentString");
                 }
             }
         }
@@ -570,10 +542,10 @@ class openrouterjsoncached
             $contentTextToSend = array_slice($contentTextToSend, 4);
         }
 
-        // Remove instruction to add back later (with null safety)
-        $instruction = !empty($contentTextToSend) ? array_pop($contentTextToSend) : ['type' => 'text', 'text' => ''];
+        // Remove instruction to add back later
+        $instruction = array_pop($contentTextToSend);
 
-        // Manage cached event list (excludes memory items in 'fresh' mode)
+        // Manage cached event list
         $completeEventList = manageCharacterEventList($contentTextToSend, $cacheCombinedDialogueFile, $max_dialogue_cache_size);
         logMessage("New elements added to cache: {$completeEventList['new_count']}");
         $completeEventList = $completeEventList['updated_list'];
@@ -585,19 +557,13 @@ class openrouterjsoncached
             $completeEventList[] = ['type' => 'text', 'text' => $lastCustomInstruction];
         }
 
-        // For simple format, append format instruction to user instruction
+        // For simple format, append format instruction to the user instruction
+        // For JSON format, instruction is already in system message
         if ($this->_responseFormat === 'simple' && !empty($formatInstruction)) {
+            // Append format instruction to the instruction text
             $instructionText = is_array($instruction) && isset($instruction['text']) ? $instruction['text'] : $instruction;
             $instructionText .= ' ' . $formatInstruction;
             $instruction = is_array($instruction) ? ['type' => 'text', 'text' => $instructionText] : $instructionText;
-        }
-
-        // Re-add memory items in 'fresh' mode (they go at end, uncached)
-        if ($this->_memoryMode === 'fresh' && !empty($memoryItems)) {
-            foreach ($memoryItems as $memItem) {
-                $completeEventList[] = $memItem;
-            }
-            logMessage("Memory mode 'fresh': Added " . count($memoryItems) . " memory items to end of context");
         }
 
         $completeEventList[] = $instruction;
@@ -605,11 +571,11 @@ class openrouterjsoncached
         // Store default target for simple format
         $this->_defaultTarget = getLastUserMessageSpeaker($contextData);
 
-        // Calculate cache control index
+        // Calculate cache control index BEFORE adding to finalMessagesToSend
         $totalElements = count($completeEventList);
         $lastIndex = $totalElements - $dialogue_cache_uncached_count - 1 - $addToIndex;
 
-        logMessage("Cache control calculation: totalElements=$totalElements, uncached=$dialogue_cache_uncached_count, calculatedIndex=$lastIndex");
+        logMessage("Cache control calculation: totalElements=$totalElements, uncached=$dialogue_cache_uncached_count, addToIndex=$addToIndex, calculatedIndex=$lastIndex");
 
         // Place cache control marker
         if ($lastIndex >= 0) {
@@ -620,26 +586,37 @@ class openrouterjsoncached
                 $batchSize = $CONTEXTHISTORY - $offset;
                 $batchNumber = floor($elements / $batchSize);
 
+                logMessage("elements: $elements, batchsize: $batchSize, batchnumber: $batchNumber");
+
                 $indexToCache = max(0, ($batchNumber * $CONTEXTHISTORY) - $offset);
 
                 if ($indexToCache >= $elements) {
+                    logMessage("index bigger or equal then elements size.");
                     $indexToCache = $elements - 1;
                 }
 
                 if ($indexToCache == 0) {
-                    $indexToCache = 33; // Gemini requires minimum 32 tokens
+                    $indexToCache = 33; // Gemini requires minimum 32 tokens for caching, use 33 to be safe
                 }
+
+                logMessage("Index to Cache: $indexToCache");
 
                 if (isset($completeEventList[$indexToCache]) && $this->_provider_caching != "OpenAI") {
                     $completeEventList[$indexToCache]["cache_control"] = $cacheControlType;
+                } else {
+                    logMessage("Warning: Index $indexToCache not found in array");
                 }
             } else {
                 logMessage("Using standard caching with dialogue_cache_uncached_count=$dialogue_cache_uncached_count");
                 if (isset($completeEventList[$lastIndex]) && $this->_provider_caching != "OpenAI") {
                     $completeEventList[$lastIndex]["cache_control"] = $cacheControlType;
                     logMessage("Cache control placed at index $lastIndex");
+                } else {
+                    logMessage("Warning: Index $lastIndex not found in array for non gemini");
                 }
             }
+        } else {
+            logMessage("Warning: Calculated cache index is negative ($lastIndex), skipping cache control");
         }
 
         // Add dynamic environment context if available
@@ -650,6 +627,7 @@ class openrouterjsoncached
             $text = preg_replace('/[.]{2,}/', '.', $text);
             $dynamicEnvironment = trim("ASSISTANT: Environmental Context: $text");
 
+            // Insert before last 2 elements, or at the end if list is too short
             $insertPosition = max(0, count($completeEventList) - 2);
             array_splice($completeEventList, $insertPosition, 0, [array('type' => 'text', 'text' => $dynamicEnvironment)]);
         }
@@ -659,7 +637,9 @@ class openrouterjsoncached
         $tokenCount = countTokensByWords($completeEventList);
         logMessage("Estimated token count: $tokenCount");
 
-        // Handle prefill for simple format (incompatible with reasoning)
+        // NOW add to finalMessagesToSend after all modifications are complete
+        // BUG#3 FIX: Enable prefill for all caching providers, not just Anthropic
+        // CRITICAL: Prefill is incompatible with reasoning - only use prefill when thinking is disabled
         if ($this->_responseFormat === 'simple' && !$toggleThinking) {
             $finalMessagesToSend[] = array('role' => 'user', 'content' => $completeEventList);
             $prefillText = '(';
@@ -674,7 +654,7 @@ class openrouterjsoncached
             $this->_prefillContent = '';
         }
 
-        // Continue to Part 4...
+        // Continue to Part 4 for final payload construction...
         return $this->_openPart4($customParms, $herikaName, $MAX_TOKENS, $toggleThinking, $thinkingTokens,
                                   $effort_level, $start_time, $finalMessagesToSend);
     }
@@ -688,14 +668,18 @@ class openrouterjsoncached
         $isAlwaysReasoning = $this->isAlwaysReasoningModel($this->_model);
 
         // Build reasoning configuration
+        // Always include exclude:true to strip reasoning tokens from output
+        // Enable reasoning if: toggle is on OR model always reasons
         $reasoning = [
             "exclude" => true,
             "enabled" => ($toggleThinking || $isAlwaysReasoning),
         ];
 
+        // Add effort level for OpenAI models (supports minimal/low/medium/high)
         if ($isOpenAIReasoning && $reasoning["enabled"]) {
             $reasoning["effort"] = $effort_level;
         } else if ($reasoning["enabled"]) {
+            // For non-OpenAI models, use max_tokens instead of effort
             $reasoning["max_tokens"] = intval($thinkingTokens);
         }
 
@@ -753,13 +737,16 @@ class openrouterjsoncached
 
         $data["transforms"] = array();
 
-        // Handle OpenAI reasoning models - special parameter handling
+        // Handle OpenAI reasoning models - they require special parameter handling
         if ($isOpenAIReasoning) {
+            // OpenAI models use max_completion_tokens instead of max_tokens
             if (isset($data["max_tokens"])) {
                 $data["max_completion_tokens"] = $data["max_tokens"];
                 unset($data["max_tokens"]);
             }
 
+            // If reasoning is enabled, OpenAI models ONLY accept these parameters
+            // All other parameters (temperature, top_p, penalties, etc.) must be stripped
             if ($reasoning["enabled"]) {
                 $cleanedData = [
                     'model' => $data['model'],
@@ -768,9 +755,12 @@ class openrouterjsoncached
                     'reasoning' => $data['reasoning']
                 ];
 
+                // Only add max_completion_tokens if it was set
                 if (isset($data['max_completion_tokens'])) {
                     $cleanedData['max_completion_tokens'] = $data['max_completion_tokens'];
                 }
+
+                // Preserve provider and transforms if they exist
                 if (isset($data['provider'])) {
                     $cleanedData['provider'] = $data['provider'];
                 }
@@ -818,7 +808,7 @@ class openrouterjsoncached
             "X-Title: Dwemer Dynamics"
         );
 
-        // Anthropic-specific headers for extended cache TTL
+        // Only send Anthropic-specific headers when using Anthropic provider
         if ($this->_provider_caching === "Anthropic") {
             $headers[] = "anthropic-beta: extended-cache-ttl-2025-04-11";
         }
@@ -867,26 +857,6 @@ class openrouterjsoncached
 
         return true;
     }
-
-    public function send($url, $context) {
-        if (isset($GLOBALS['mockConnectorSend'])) {
-            return call_user_func($GLOBALS['mockConnectorSend'], $url, $context);
-        }
-        return fopen($url, 'r', false, $context);
-    }
-
-    public function getHttpStatusCode() {
-        if (isset($GLOBALS['mockConnectorResponseMetaData'])) {
-            $responseInfo = call_user_func($GLOBALS['mockConnectorResponseMetaData']);
-        } else {
-            $responseInfo = stream_get_meta_data($this->primary_handler);
-        }
-
-        $statusLine = $responseInfo['wrapper_data'][0];
-        preg_match('/\d{3}/', $statusLine, $matches); // get three digits (200, 300, 404, etc)
-        return isset($matches[0]) ? intval($matches[0]) : null;
-    }
-    
 
     public function process() {
         global $alreadysent;
@@ -989,10 +959,15 @@ class openrouterjsoncached
                                     @file_put_contents(__DIR__ . DIRECTORY_SEPARATOR . "_cached_perf.log", $logPerfEntry, FILE_APPEND);
                                 }
 
+                                logMessage("[{$this->name}:{$herikaName}] Stop (delta): " . $data['delta']['stop_reason']);
+
                                 // Flush remaining simple format content before closing
                                 if ($this->_responseFormat === 'simple') {
                                     $flushed = $this->_flushRemainingSimpleFormat();
                                     if (!empty($flushed)) {
+                                        // Return flushed content immediately
+                                        // Don't set _forcedClose yet - flush might have more content
+                                        // Will be set on next call when flush returns empty
                                         return $flushed;
                                     }
                                 }
@@ -1033,14 +1008,15 @@ class openrouterjsoncached
                             if ($this->_responseFormat === 'simple') {
                                 $flushed = $this->_flushRemainingSimpleFormat();
                                 if (!empty($flushed)) {
+                                    // Return flushed content immediately
+                                    // Don't set _forcedClose yet - flush might have more content
+                                    // Will be set on next call when flush returns empty
                                     return $flushed;
                                 }
                             }
 
                             $this->_forcedClose = true;
                         }
-
-                        $this->_lastStreamedObject = $data;
                     }
                     // Generic error
                     elseif (isset($data['error'])) {
@@ -1061,6 +1037,9 @@ class openrouterjsoncached
             if ($this->_responseFormat === 'simple') {
                 $flushed = $this->_flushRemainingSimpleFormat();
                 if (!empty($flushed)) {
+                    // Return flushed content immediately
+                    // Don't set _forcedClose yet - flush might have more content
+                    // Will be set on next call when flush returns empty
                     return $flushed;
                 }
             }
@@ -1076,15 +1055,10 @@ class openrouterjsoncached
         return "";
     }
 
-    // ================================================================================
-    // SIMPLE FORMAT PARSER METHODS (for response_format = 'simple')
-    // These methods implement the sentence streaming algorithm for non-JSON responses
-    // ================================================================================
-
     /**
-     * Preprocesses reasoning tags in the buffer (Step 0 of simple format algorithm)
-     * Strips <think>, <thinking>, and <answer> tags from the buffer
-     * Returns false when waiting for closing tag (signals caller to wait for more data)
+     * Preprocesses reasoning tags from buffer (Step 0 of algorithm)
+     * Handles <think>, <thinking>, and <answer> tags including orphaned closing tags
+     * Returns true if ready to continue, false if waiting for closing tag
      */
     private function _preprocessReasoningTags() {
         // Check for orphaned closing tag (prefill case)
@@ -1094,6 +1068,7 @@ class openrouterjsoncached
                 $closeLen = strlen($matches[0][0]);
                 $this->_buffer = substr($this->_buffer, $closePos + $closeLen);
                 logMessage("[{$this->name}] Stripped orphaned closing tag (prefill case)");
+                // Continue to state machine check below
             }
         }
 
@@ -1104,18 +1079,23 @@ class openrouterjsoncached
                 $closePos = strpos($this->_buffer, $closeTag);
 
                 if ($closePos !== false) {
+                    // Found closing tag - strip everything up to and including it
                     $this->_buffer = substr($this->_buffer, $closePos + strlen($closeTag));
                     logMessage("[{$this->name}] Stripped reasoning block: <{$this->_reasoningTagType}>...</{$this->_reasoningTagType}>");
                     $this->_reasoningState = 'NORMAL';
                     $this->_reasoningTagType = '';
+                    // Continue loop - might have more reasoning or answer tags
                 } else {
-                    return false; // Still waiting for closing tag
+                    // Still waiting for closing tag
+                    return false; // Signal: need more chunks
                 }
             } else { // NORMAL state
+                // Check if buffer starts with reasoning tag
                 if (preg_match('/^<(think|thinking)>/i', $this->_buffer, $matches)) {
                     $this->_reasoningTagType = strtolower($matches[1]);
                     $this->_reasoningState = 'WAITING_FOR_REASONING_CLOSE';
                     logMessage("[{$this->name}] Detected reasoning tag opening: <{$this->_reasoningTagType}>");
+                    // Continue loop - might complete in same iteration
                 } else {
                     break; // No reasoning tag at start, exit loop
                 }
@@ -1129,16 +1109,16 @@ class openrouterjsoncached
             logMessage("[{$this->name}] Stripped <answer> tags, preserved content");
         }
 
-        return true; // Ready to continue
+        return true; // Signal: ready to continue
     }
 
     /**
-     * Extracts metadata from normalized buffer (Step 4 of simple format algorithm)
-     * Searches for (mood)(listener)(action)(target) pattern at start
+     * Extracts metadata from normalized buffer (Step 4 of algorithm)
+     * Searches for metadata + complete sentence pattern
      * Returns array with 'found', 'metadataEnd', and 'groups' keys
      */
     private function _extractMetadata($normalizedBuffer) {
-        // Check if all fields disabled - no metadata expected
+        // Check if all fields disabled
         if (!$this->_includeMood && !$this->_includeListener &&
             !$this->_includeActions && !$this->_includeTarget) {
             return [
@@ -1148,7 +1128,7 @@ class openrouterjsoncached
             ];
         }
 
-        // Find consecutive (...) at start
+        // Find consecutive (...) at start (start-anchored pattern)
         if (!preg_match('/^\s*(?:\([^)]*\)\s*)+/', $normalizedBuffer, $match)) {
             return ['found' => false];
         }
@@ -1157,7 +1137,7 @@ class openrouterjsoncached
         $metadataEnd = strlen($metadataSection);
         $potentialMessage = substr($normalizedBuffer, $metadataEnd);
 
-        // Search for at least one complete sentence in message
+        // Search for sentence in message (detection pattern with end-of-buffer support)
         if (!preg_match('/\.\.\.(?:\s+|$)|[.!?](?:\s+|$)/', $potentialMessage)) {
             return ['found' => false]; // No sentence yet, wait
         }
@@ -1173,8 +1153,8 @@ class openrouterjsoncached
     }
 
     /**
-     * Maps extracted metadata groups to global fields
-     * Handles: mood -> animations, listener, action + target -> commands
+     * Maps extracted groups to global fields (mood, listener, action, target)
+     * Handles action command generation with deduplication
      */
     private function _mapGroupsToFields($groups) {
         $idx = 0;
@@ -1221,10 +1201,12 @@ class openrouterjsoncached
     }
 
     /**
-     * Flushes remaining content when stream ends
-     * Returns complete sentences first, then trailing partial with added period
+     * Flushes remaining content when stream ends (handles trailing partials)
+     * Based on design doc lines 280-310 close() algorithm
+     * Returns content incrementally across multiple calls
      */
     private function _flushRemainingSimpleFormat() {
+        // If metadata was never extracted, nothing to flush
         if ($this->_metadataEnd === -1) {
             logMessage("[{$this->name}] Flush: No metadata extracted, nothing to flush");
             return "";
@@ -1238,68 +1220,92 @@ class openrouterjsoncached
 
         // Extract message portion
         $message = substr($normalizedBuffer, $this->_metadataEnd);
-        logMessage("[{$this->name}] Flush: Message length=" . strlen($message));
+        logMessage("[{$this->name}] Flush: Message length=" . strlen($message) . ", first 100 chars: " . substr($message, 0, 100));
 
         // Split into sentences
         $sentences = $this->_splitIntoSentences($message);
-        logMessage("[{$this->name}] Flush: Found " . count($sentences) . " sentences, sent " . $this->_sentencesSent);
+        logMessage("[{$this->name}] Flush: Found " . count($sentences) . " complete sentences, already sent " . $this->_sentencesSent);
 
-        // First: Flush unsent complete sentences
+        // First priority: Flush unsent complete sentences
         if ($this->_sentencesSent < count($sentences)) {
             $sentence = $sentences[$this->_sentencesSent];
             $this->_sentencesSent++;
-            logMessage("[{$this->name}] Flushing sentence #{$this->_sentencesSent}");
-            return $sentence . ' ';  // BUG FIX: Add trailing space
+            logMessage("[{$this->name}] Flushing complete sentence #{$this->_sentencesSent}: " . substr($sentence, 0, 80));
+            if (!empty($sentence) && $sentence[0] === ':') {
+                logMessage("[{$this->name}] Flush: ⚠️ FLUSHED SENTENCE STARTS WITH COLON");
+            }
+            return $sentence;
         }
 
-        // Second: Flush trailing partial (once)
+        // Second priority: Flush trailing partial (once)
         if (!$this->_flushedPartial) {
             $this->_flushedPartial = true;
 
+            // Find trailing partial (text after last punctuation)
             if (preg_match_all('/[.!?…]/', $message, $matches, PREG_OFFSET_CAPTURE)) {
                 $lastMatch = end($matches[0]);
                 $lastPunctPos = $lastMatch[1];
                 $partial = trim(substr($message, $lastPunctPos + 1));
+                logMessage("[{$this->name}] Flush: Last punctuation at position $lastPunctPos, partial length=" . strlen($partial));
             } else {
+                // No punctuation at all - entire message is partial
                 $partial = trim($message);
+                logMessage("[{$this->name}] Flush: No punctuation found, entire message is partial, length=" . strlen($partial));
             }
 
+            // Return partial with added period if non-empty and lacks punctuation
             if (!empty($partial) && !preg_match('/[.!?…]$/', $partial)) {
                 $partial .= '.';
-                logMessage("[{$this->name}] Flushing trailing partial: " . substr($partial, 0, 50));
-                return $partial . ' ';  // BUG FIX: Add trailing space
+                logMessage("[{$this->name}] Flushing trailing partial (" . strlen($partial) . " chars): \"" . substr($partial, 0, 100) . "...\"");
+                return $partial;
+            } else if (empty($partial)) {
+                logMessage("[{$this->name}] Flush: Partial is empty, nothing to return");
+            } else {
+                logMessage("[{$this->name}] Flush: Partial already ends with punctuation: \"" . substr($partial, 0, 50) . "\"");
             }
+        } else {
+            logMessage("[{$this->name}] Flush: Already flushed partial");
         }
 
+        // Nothing left to flush
+        logMessage("[{$this->name}] Flush: Nothing left to flush");
         return "";
     }
 
     /**
-     * Splits message into complete sentences (Step 7 of simple format algorithm)
-     * Uses sentence-ending punctuation followed by whitespace as delimiters
+     * Splits message into complete sentences (Step 7 of algorithm)
+     * Uses splitting pattern (not detection pattern) and filters for completeness
      */
     private function _splitIntoSentences($text) {
-        // Split on sentence endings followed by whitespace
+        // Split on sentence endings followed by space (no end-of-buffer here!)
         $parts = preg_split('/(?<=\.\.\.)\s+|(?<=[.!?])\s+/', $text, -1, PREG_SPLIT_NO_EMPTY);
 
         logMessage("[{$this->name}] _splitIntoSentences: Split into " . count($parts) . " parts");
 
         // Filter: keep only sentences ending with punctuation
         $sentences = [];
-        foreach ($parts as $part) {
+        foreach ($parts as $i => $part) {
+            $beforeTrim = $part;
             $part = trim($part);
+
+            // Log if trim removed colons
+            if ($beforeTrim !== $part && strpos($beforeTrim, ':') !== false) {
+                logMessage("[{$this->name}] _splitIntoSentences: Part $i BEFORE trim: " . substr($beforeTrim, 0, 80));
+                logMessage("[{$this->name}] _splitIntoSentences: Part $i AFTER trim: " . substr($part, 0, 80));
+            }
+
             if (preg_match('/[.!?…]+$/', $part)) {
+                logMessage("[{$this->name}] _splitIntoSentences: Part $i kept (ends with punctuation): " . substr($part, 0, 80));
                 $sentences[] = $part;
+            } else {
+                logMessage("[{$this->name}] _splitIntoSentences: Part $i filtered out (no ending punctuation): " . substr($part, 0, 80));
             }
         }
 
         return $sentences;
     }
 
-    /**
-     * Unified content parsing dispatcher - handles both JSON and simple formats
-     * Called by process() to parse and return content appropriately
-     */
+    // Helper method to parse and return content based on format
     private function _parseAndReturnContent() {
         if ($this->_responseFormat === 'json') {
             // JSON format parsing
@@ -1313,22 +1319,20 @@ class openrouterjsoncached
                 }
                 if (isset($tempJson["listener"])) {
                     if (isset($tempJson["action"]) && ($tempJson["action"] == "Talk") &&
-                        function_exists('lazyEmpty') && lazyEmpty($tempJson["listener"]) && !lazyEmpty($tempJson["target"])) {
+                        lazyEmpty($tempJson["listener"]) && !lazyEmpty($tempJson["target"])) {
                         $GLOBALS["SCRIPTLINE_LISTENER"] = $tempJson["target"];
                     } else {
                         $GLOBALS["SCRIPTLINE_LISTENER"] = $tempJson["listener"];
                     }
                 }
-                // Strip any reasoning tokens from final message
-                if (function_exists('stripReasoningTokens')) {
-                    return stripReasoningTokens($tempJson['message']);
-                }
-                return $tempJson['message'];
+                // Strip any reasoning tokens from final message before returning
+                return stripReasoningTokens($tempJson['message']);
             }
         } else {
-            // SIMPLE FORMAT PARSER
+            // NEW SIMPLE FORMAT PARSER - Ultra-simple architecture
+            // Design: Wait when ambiguous, only process when certain. No offset math!
 
-            // Step 0: Preprocess reasoning tags
+            // Step 0: REASONING PREPROCESSING (runs every call)
             if (!$this->_preprocessReasoningTags()) {
                 return ""; // Waiting for reasoning closing tag
             }
@@ -1339,14 +1343,15 @@ class openrouterjsoncached
                 $normalizedBuffer = '(' . $normalizedBuffer;
             }
 
-            // Step 4: Extract metadata section (one-time)
+            // Step 4: Extract metadata section (one-time operation)
             if ($this->_metadataEnd === -1) {
                 $result = $this->_extractMetadata($normalizedBuffer);
 
                 if (!$result['found']) {
-                    // Step 5: Timeout fallback if buffer too large
+                    // Step 5: TIMEOUT FALLBACK
                     if (strlen($normalizedBuffer) > 100) {
-                        logMessage("[{$this->name}] Simple format timeout - LLM didn't follow format");
+                        logMessage("[{$this->name}] Simple format timeout - LLM didn't follow format (buffer > 100 chars)");
+                        // Split by punctuation and filter for complete sentences
                         $parts = preg_split('/(?<=\.\.\.)\s+|(?<=[.!?])\s+/', $normalizedBuffer, -1, PREG_SPLIT_NO_EMPTY);
                         $sentences = [];
                         foreach ($parts as $part) {
@@ -1355,12 +1360,14 @@ class openrouterjsoncached
                                 $sentences[] = $part;
                             }
                         }
+                        // Set metadata as not found, start from beginning
                         $this->_metadataEnd = 0;
                         $this->_sentencesSent = 0;
 
+                        // Return first sentence if any
                         if (!empty($sentences)) {
                             $this->_sentencesSent = 1;
-                            return $sentences[0] . ' ';  // BUG FIX: Add trailing space
+                            return $sentences[0];
                         }
                     }
                     return ""; // Wait for more chunks
@@ -1370,21 +1377,28 @@ class openrouterjsoncached
                 $this->_metadataEnd = $result['metadataEnd'];
                 $this->_metadataGroups = $result['groups'];
                 $this->_mapGroupsToFields($result['groups']);
-                logMessage("[{$this->name}] Metadata extracted: groups=" . count($result['groups']));
+                logMessage("[{$this->name}] Metadata extracted: metadataEnd={$this->_metadataEnd}, groups=" . count($result['groups']));
             }
 
             // Step 6: Extract message portion
             $message = substr($normalizedBuffer, $this->_metadataEnd);
 
-            // Step 7: Split into sentences
+            // Step 7: Split message into sentences
             $sentences = $this->_splitIntoSentences($message);
 
             // Step 8: Return next unsent sentence
             if ($this->_sentencesSent < count($sentences)) {
                 $sentence = $sentences[$this->_sentencesSent];
                 $this->_sentencesSent++;
-                logMessage("[{$this->name}] Returning sentence #{$this->_sentencesSent}");
-                return $sentence . ' ';  // BUG FIX: Add trailing space
+
+                // Diagnostic logging to track what is being returned
+                logMessage("[{$this->name}] _parseAndReturnContent returning sentence #{$this->_sentencesSent}: " . substr($sentence, 0, 100));
+                if (!empty($sentence) && $sentence[0] === ':') {
+                    logMessage("[{$this->name}] _parseAndReturnContent: ⚠️ SENTENCE STARTS WITH COLON");
+                }
+
+                // No stripReasoningTokens() call - already done in Step 0!
+                return $sentence;
             }
 
             return "";
@@ -1393,11 +1407,6 @@ class openrouterjsoncached
         return "";
     }
 
-    // ================================================================================
-    // END SIMPLE FORMAT PARSER METHODS
-    // ================================================================================
-
-    // Method to close the data processing operation
     public function close() {
         if ($this->primary_handler) {
             @fclose($this->primary_handler);
@@ -1431,19 +1440,49 @@ class openrouterjsoncached
         return "";
     }
 
-   
-
-    // Method to process actions from LLM response - supports both JSON and simple formats
-    public function processActions()
-    {
+    public function processActions() {
         global $alreadysent;
-        $this->_commandBuffer = isset($this->_commandBuffer) ? $this->_commandBuffer : array();
+        $this->_commandBuffer = array();
         $herikaName = isset($GLOBALS["HERIKA_NAME"]) ? $GLOBALS["HERIKA_NAME"] : 'default_herika';
 
-        logMessage("[{$this->name}:{$herikaName}] processActions: responseFormat={$this->_responseFormat}");
+        logMessage("start process actions");
 
-        // Handle simple format action processing
-        if ($this->_responseFormat === 'simple') {
+        if ($this->_responseFormat === 'json') {
+            // JSON format action processing
+            if (!empty($this->_buffer)) {
+                $jsonStart = strpos($this->_buffer, '{');
+                $jsonEnd = strrpos($this->_buffer, '}');
+
+                if ($jsonStart !== false && $jsonEnd !== false && $jsonEnd > $jsonStart) {
+                    $possibleJson = substr($this->_buffer, $jsonStart, $jsonEnd - $jsonStart + 1);
+                    $parsedResponse = json_decode($possibleJson, true);
+
+                    if (json_last_error() === JSON_ERROR_NONE && is_array($parsedResponse)) {
+                        logMessage("[{$this->name}:{$herikaName}] Parsed JSON from buffer: " . json_encode($parsedResponse));
+
+                        if (isset($parsedResponse['action']) && !empty($parsedResponse['action'])) {
+                            $target = isset($parsedResponse['target']) ? $parsedResponse['target'] : '';
+                            $character = isset($parsedResponse['character']) ? $parsedResponse['character'] : $herikaName;
+                            $commandKey = md5("{$character}|command|{$parsedResponse['action']}@{$target}\r\n");
+
+                            if (!isset($alreadysent[$commandKey]) || empty($alreadysent[$commandKey])) {
+                                $functionCodeName = function_exists('getFunctionCodeName') ? getFunctionCodeName($parsedResponse['action']) : $parsedResponse['action'];
+                                $functionCodeName = empty($functionCodeName) ? $parsedResponse['action'] : $functionCodeName;
+
+                                $commandString = "{$character}|command|{$functionCodeName}@{$target}\r\n";
+                                $this->_commandBuffer[] = $commandString;
+                                $alreadysent[$commandKey] = $commandString;
+
+                                logMessage("[{$this->name}:{$herikaName}] Generated command: {$commandString}");
+                            }
+                        }
+                    } else {
+                        logMessage("[{$this->name}:{$herikaName}] Failed to parse JSON: " . json_last_error_msg());
+                    }
+                }
+            }
+        } else {
+            // Simple format action processing
             $parsed = extractSimpleFormatFromBuffer(
                 $this->_buffer,
                 $this->_includeMood,
@@ -1470,159 +1509,39 @@ class openrouterjsoncached
                     logMessage("[{$this->name}:{$herikaName}] Generated command from simple format: {$commandString}");
                 }
             }
-
-            $this->_jsonResponsesEncoded = array();
-
-            if (!empty($this->_commandBuffer)) {
-                logMessage("[{$this->name}:{$herikaName}] Final Command Buffer: " . implode(", ", $this->_commandBuffer));
-            } else {
-                logMessage("[{$this->name}:{$herikaName}] No commands generated.");
-            }
-
-            return empty($this->_commandBuffer) ? array() : $this->_commandBuffer;
         }
 
-        // JSON format action processing (CHIM 2.2 style with multi-param support)
-        if ($this->_functionName) {
-            Logger::info("Old function scheme");
-            $parameterArr = json_decode($this->_parameterBuff, true);
-            if (is_array($parameterArr)) {
-                $parameter = current($parameterArr); // Only support for one parameter
-
-                if (!isset($alreadysent[md5("{$GLOBALS["HERIKA_NAME"]}|command|{$this->_functionName}@$parameter\r\n")])) {
-                    $functionCodeName=getFunctionCodeName($this->_functionName);
-                    $this->_commandBuffer[]="{$GLOBALS["HERIKA_NAME"]}|command|$functionCodeName@$parameter\r\n";
-                    //echo "Herika|command|$functionCodeName@$parameter\r\n";
-
-                }
-
-                $alreadysent[md5("{$GLOBALS["HERIKA_NAME"]}|command|{$this->_functionName}@$parameter\r\n")] = "{$GLOBALS["HERIKA_NAME"]}|command|{$this->_functionName}@$parameter\r\n";
-                if (ob_get_level()) @ob_flush();
-            } else 
-                return null;
-        } else {
-            $GLOBALS["DEBUG_DATA"]["RAW"]=$this->_buffer;
-            unset($GLOBALS["_JSON_BUFFER"]);
-            $parsedResponse=__jpd_decode_lazy($this->_buffer);   // USE JPD_LAZY?
-            //error_log("New function scheme");
-            if (is_array($parsedResponse)) {
-                //error_log("New function scheme: ".print_r($this->_buffer,true));
-
-                if (isset($parsedResponse[0]["action"])) {
-                    $parsedResponse=$parsedResponse[0];
-                }
-
-                if (!isset($parsedResponse["target"]))    
-                    $parsedResponse["target"] = "";
-                
-                // Build parameter string - use JSON for functions with multiple parameters
-                $functionDef=findFunctionByName(trim($parsedResponse["action"]));
-                $paramString = "";
-                $functionCodeName = "";
-                if (isset($functionDef)) {
-                    $functionCodeName=getFunctionCodeName($parsedResponse["action"]);
-                    $paramCount = count($functionDef["parameters"]["properties"] ?? []);
-                    
-                    // For functions with multiple parameters, send as JSON
-                    if ($paramCount > 1) {
-                        $params = [];
-                        foreach (array_keys($functionDef["parameters"]["properties"] ?? []) as $paramName) {
-                            if (isset($parsedResponse[$paramName])) {
-                                $params[$paramName] = $parsedResponse[$paramName];
-                            }
-                        }
-                        
-                        // Check if required parameters are missing
-                        $requiredParams = $functionDef["parameters"]["required"] ?? [];
-                        $missingParams = [];
-                        foreach ($requiredParams as $reqParam) {
-                            if (!isset($params[$reqParam]) || $params[$reqParam] === "") {
-                                $missingParams[] = $reqParam;
-                            }
-                        }
-                        
-                        if (!empty($missingParams)) {
-                            Logger::warn("openrouterjson: Missing required parameters for {$functionCodeName}: " . implode(", ", $missingParams) . ". Skipping command.");
-                            // Skip this command by setting action to empty
-                            $parsedResponse["action"] = "";
-                            $functionCodeName = "";
-                        } else {
-                            $paramString = json_encode($params);
-                            Logger::info("openrouterjson: Multi-param function {$functionCodeName}, params: {$paramString}");
-                        }
-                    } else {
-                        // Legacy: single parameter as plain string
-                        $paramString = $parsedResponse["target"] ?? "";
-                    }
-                } else {
-                    $paramString = $parsedResponse["target"] ?? "";
-                    $functionCodeName = $parsedResponse["action"] ?? "";
-                }
-                
-                $commandStr = "{$GLOBALS["HERIKA_NAME"]}|command|$functionCodeName@{$paramString}\r\n";
-                Logger::info("openrouterjson: Sending command: {$commandStr}");
-                if (!empty($parsedResponse["action"])) {
-                    if (!isset($alreadysent[md5($commandStr)])) {
-                        
-                        if (isset($functionDef)) {
-                            if (strlen($functionDef["parameters"]["required"][0] ?? '')>0) {
-                                if (!empty($paramString)) {
-                                    $this->_commandBuffer[]=$commandStr;
-                                }
-                                else {
-                                    $this->_commandBuffer[]="{$GLOBALS["HERIKA_NAME"]}|command|$functionCodeName@\r\n";
-                                    Logger::warn("openrouterjson: Missing required parameter: target");
-                                    // Change. we allow this. Post filter maybe can fix.
-                                }
-                                    
-                            } else {
-                                $this->_commandBuffer[]=$commandStr;
-                            }
-                        } elseif ($parsedResponse["action"] != "Talk") {
-                            Logger::warn("openrouterjson: Function not found for {$parsedResponse["action"]}");
-                        }
-                        
-                        $alreadysent[md5($commandStr)]=end($this->_commandBuffer);
-                    
-                    } else {
-                         Logger::warn("openrouterjson: Function not found for {$parsedResponse["action"]} already sent");
-                    }
-                        
-                }
-                
-                if (ob_get_level()) @ob_flush();
-            } else {
-                Logger::info("No actions");
-                return [];
-            }
+        // Also process tool calls if any (JSON mode fallback)
+        if (!empty($this->_jsonResponsesEncoded)) {
+            // Note: Tool call processing would go here if needed
+            // For now, focusing on JSON response format and simple format
         }
 
-        //print_r($parsedResponse);
-        Logger::info("openrouterjson: Returning command buffer with " . count($this->_commandBuffer) . " commands");
+        $this->_jsonResponsesEncoded = array();
+
         if (!empty($this->_commandBuffer)) {
-            foreach ($this->_commandBuffer as $cmd) {
-                Logger::info("openrouterjson: Buffer contains: {$cmd}");
-            }
+            logMessage("[{$this->name}:{$herikaName}] Final Command Buffer: " . implode(", ", $this->_commandBuffer));
+        } else {
+            logMessage("[{$this->name}:{$herikaName}] No commands generated.");
         }
-        return $this->_commandBuffer;
+
+        return empty($this->_commandBuffer) ? array() : $this->_commandBuffer;
     }
 
-    public function isDone()
-    {
+    public function isDone() {
         if ($this->_forcedClose)
             return true;
         return !$this->primary_handler || feof($this->primary_handler);
     }
 
-    public function setDone()
-    {
+    public function setDone() {
         $this->_forcedClose=true;
     }
 
-    // NOTE: fast_request() is NOT available in the cached connector.
-    // This connector is streaming-only and designed for main conversation.
-    // For non-streaming requests (CORE_CONNECTOR_MEDIUMTERM, CORE_CONNECTOR_SUMMARY, etc.),
-    // use the standard openrouterjson connector instead.
-
+    public function send($url, $context) {
+        if (isset($GLOBALS['mockConnectorSend'])) {
+            return call_user_func($GLOBALS['mockConnectorSend'], $url, $context);
+        }
+        return fopen($url, 'r', false, $context);
+    }
 }
-

@@ -1,9 +1,11 @@
-CHIM Cached Connector v1.4 - Package Contents
+CHIM Cached Connector v2.0 - Package Contents
 ==============================================
 
 This package is split into CORE and ADDITIONALS for easier maintenance
 when HerikaServer updates. The CORE files are the minimum required to
 run the cached connector. ADDITIONALS provide enhanced features.
+
+NOTE: v2.0 is for CHIM 2.2. For CHIM 2.0.x, use v1.4.
 
 PACKAGE STRUCTURE
 -----------------
@@ -169,7 +171,7 @@ After HerikaServer update, to restore connector:
 3. Copy ADDITIONALS files (3 files) when ready
 4. "Minimize Quality" toggle appears automatically
 
-Package Date: 2026-01-21
-CHIM Version: 2.0.3
-Connector Version: 1.4
-Key Feature: Core/Additionals split for easier maintenance, removed verbose connector
+Package Date: 2026-01-28
+CHIM Version: 2.2
+Connector Version: 2.0
+Key Feature: Complete rewrite for CHIM 2.2, streaming-only design, memory modes

@@ -1,5 +1,5 @@
-CHIM Cached Connector v1.3.3 - Installation Instructions
-========================================================
+CHIM Cached Connector v2.0 - Installation Instructions
+======================================================
 
 IMPORTANT: READ BEFORE INSTALLING
 ----------------------------------
@@ -7,9 +7,11 @@ This connector provides advanced caching, thinking/reasoning support, flexible
 quality instruction control, correct custom instruction placement, and true
 sentence-by-sentence streaming for simple format.
 
+v2.0 is a complete rewrite for CHIM 2.2 with streaming-only design.
+
 REQUIREMENTS
 ------------
-- CHIM 2.0.3 or compatible version
+- CHIM 2.2 or compatible version (NOT compatible with CHIM 2.0.x)
 - PHP 7.4 or higher
 - OpenRouter, Anthropic, OpenAI, or Gemini API access
 - Write permissions to CHIM installation directory
@@ -289,8 +291,8 @@ license terms as the main CHIM project.
 
 VERSION INFORMATION
 -------------------
-Package: CHIM Cached Connector v1.3.3
-Release Date: 2025-11-16
-CHIM Compatibility: 2.0.3
+Package: CHIM Cached Connector v2.0
+Release Date: 2026-01-28
+CHIM Compatibility: 2.2
 Connector Type: OpenRouter JSON Cached with Advanced Features
-Key Feature: True sentence-by-sentence streaming for simple format
+Key Feature: Complete rewrite for CHIM 2.2, streaming-only design, memory modes

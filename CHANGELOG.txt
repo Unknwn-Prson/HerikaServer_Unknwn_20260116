@@ -1,3 +1,64 @@
+CHIM Cached Connector v2.0 - Release Notes
+==========================================
+Release Date: 2026-01-28
+Compatible with: CHIM 2.2
+
+OVERVIEW
+--------
+v2.0 is a major release that ports the cached connector from CHIM 2.0.5 to CHIM 2.2.
+
+KEY CHANGES FROM v1.4
+---------------------
+
+1. ARCHITECTURE REWRITE
+   - Completely rewritten to follow CHIM 2.2 connector architecture
+   - 4-part open() structure (open, _openPart2, _openPart3, _openPart4)
+   - Streaming-only design (fast_request removed)
+   - Format-aware process() method for Anthropic/OpenAI SSE formats
+
+2. NEW CONFIGURATION OPTIONS
+   - memory_mode: 'accumulate' (deduplicate in cache) or 'fresh' (like regular connector)
+   - cache_invalidation_mode: 'time_based' or 'sync_updates' (experimental)
+
+3. INCOMPATIBLE CONNECTOR FILTERING
+   - Cached connector hidden from CORE_CONNECTOR types that use fast_request:
+     * CORE_CONNECTOR_PLAYER
+     * CORE_CONNECTOR_SUMMARY
+     * CORE_CONNECTOR_MEDIUMTERM
+     * CORE_CONNECTOR_PROFILES
+   - These require non-streaming fast_request which cached connector doesn't support
+
+4. BUG FIXES
+   - Null-safe handling for empty context arrays
+   - function_exists check for stripReasoningTokens
+
+5. FILES CHANGED
+   - connector/openrouterjsoncached.php: Complete rewrite for CHIM 2.2
+   - connector/openrouterjsoncached_helpers.php: Unchanged (compatible)
+   - conf/conf_schema.json: Added memory_mode, cache_invalidation_mode
+   - lib/core/llm_connector.class.php: Added v2 setting defaults
+   - ui/core/llm_connectors.php: Added v2 settings UI
+   - ui/global_settings.php: Added cached connector filtering
+
+6. STREAMING-ONLY DESIGN
+   - fast_request() method removed entirely
+   - All operations use streaming for better user experience
+   - Connector incompatible with CORE_CONNECTOR types that require fast_request
+
+UPGRADE NOTES
+-------------
+- v2.0 requires CHIM 2.2 (not compatible with CHIM 2.0.x)
+- Existing connector configurations preserved (same driver name)
+- New settings default to recommended values if not configured
+- fast_request-dependent connector assignments need reassignment
+
+KNOWN LIMITATIONS
+-----------------
+- Web search feature: Properties exist but logic not yet ported
+- sync_updates cache mode: Property exists but not fully implemented
+
+============================================================
+
 CHIM Cached Connector v1.4 - Release Notes
 ==========================================
 Release Date: 2026-01-21
