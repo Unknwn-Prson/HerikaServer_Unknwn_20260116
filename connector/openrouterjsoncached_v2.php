@@ -3,8 +3,13 @@
 $enginePath = dirname((__FILE__)) . DIRECTORY_SEPARATOR."..".DIRECTORY_SEPARATOR;
 require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_functions.php");
 
-class openrouterjson
+// Cached version of openrouterjson connector with Anthropic/OpenAI/Gemini cache support
+// Based on CHIM 2.2 architecture with additional caching and response format features
+
+class openrouterjsoncached
 {
+    // Version tracking - update after making changes
+    const VERSION = 'OpenRouter Cache Connector v2.0 for CHIM 2.2 | 2026/01/28';
     public $primary_handler;
     public $name;
 
@@ -42,11 +47,40 @@ class openrouterjson
     private $_timeout;
     private $_is_grok;
     private $_lastStreamedObject;
-    
-    
+
+    // Caching-specific properties
+    private $_provider_caching;
+    private $_responseFormat;
+    private $_includeMood;
+    private $_includeActions;
+    private $_includeTarget;
+    private $_includeListener;
+    private $_defaultTarget;
+    private $_simpleFormatParsed;
+    private $_usedPrefill;
+    private $_prefillContent;
+    private $_simpleFormatMessageStart;
+    private $_lastReturnedLength;
+    public $_jsonResponsesEncoded = array();
+
+    // Simple format parser state variables
+    private $_reasoningState;
+    private $_reasoningTagType;
+    private $_metadataEnd;
+    private $_sentencesSent;
+    private $_metadataGroups;
+    private $_flushedPartial;
+
+    // Memory handling mode: 'accumulate' (dedupe) or 'fresh' (like regular connector)
+    private $_memoryMode;
+
+    // Cache invalidation mode: 'time_based' or 'sync_updates'
+    private $_cacheInvalidationMode;
+
+
     public function __construct()
     {
-        $this->name="openrouterjson";
+        $this->name="openrouterjsoncached";
         $this->_commandBuffer=[];
         $this->_stopProc=false;
         $this->_extractedbuffer="";
@@ -74,7 +108,38 @@ class openrouterjson
         $this->_websearch_text="";
         $this->_websearch_index=0;
         $this->_webbackup_func=false;
+
+        // Initialize caching properties
+        $this->_provider_caching = 'Anthropic';
+        $this->_responseFormat = 'json';
+        $this->_includeMood = true;
+        $this->_includeActions = true;
+        $this->_includeTarget = true;
+        $this->_includeListener = true;
+        $this->_defaultTarget = '';
+        $this->_simpleFormatParsed = false;
+        $this->_usedPrefill = false;
+        $this->_prefillContent = '';
+        $this->_simpleFormatMessageStart = -1;
+        $this->_lastReturnedLength = 0;
+        $this->_jsonResponsesEncoded = array();
+
+        // Initialize simple format parser state
+        $this->_reasoningState = 'NORMAL';
+        $this->_reasoningTagType = '';
+        $this->_metadataEnd = -1;
+        $this->_sentencesSent = 0;
+        $this->_metadataGroups = [];
+        $this->_flushedPartial = false;
+
+        // Initialize new v2 settings
+        $this->_memoryMode = 'accumulate';  // 'accumulate' or 'fresh'
+        $this->_cacheInvalidationMode = 'time_based';  // 'time_based' or 'sync_updates'
+
         require_once(__DIR__."/__jpd.php");
+        require_once(__DIR__."/openrouterjsoncached_helpers.php");
+
+        logMessage("[{$this->name}] OpenRouter Cached Connector v" . self::VERSION . " initialized");
     }
 
 
