@@ -61,6 +61,91 @@ if (isset($_GET["export"])) {
     fclose($outEarly);
     exit;
 }
+
+// AJAX handler: Cache statistics
+if (isset($_GET["action"]) && $_GET["action"] === "cache_stats") {
+    header('Content-Type: application/json');
+    $tempDir = $enginePath . "temp/";
+    $stats = [
+        'npc_count' => 0,
+        'total_size' => 0,
+        'total_entries' => 0,
+        'oldest_age' => 0
+    ];
+
+    if (is_dir($tempDir)) {
+        $cacheFiles = glob($tempDir . "combined_dialogue_cache_*.tmp");
+        $npcNames = [];
+
+        foreach ($cacheFiles as $file) {
+            // Extract NPC name from filename
+            if (preg_match('/combined_dialogue_cache_(json|simple)_(.+)\.tmp$/', basename($file), $m)) {
+                $npcNames[$m[2]] = true;
+            }
+
+            $stats['total_size'] += filesize($file);
+            $age = time() - filemtime($file);
+            if ($age > $stats['oldest_age']) {
+                $stats['oldest_age'] = $age;
+            }
+
+            // Count entries in dialogue cache
+            $content = @file_get_contents($file);
+            if ($content !== false) {
+                $decoded = json_decode($content, true);
+                if (is_array($decoded)) {
+                    $stats['total_entries'] += count($decoded);
+                }
+            }
+        }
+
+        // Also count system cache files
+        $systemFiles = glob($tempDir . "system_cache_*.tmp");
+        foreach ($systemFiles as $file) {
+            $stats['total_size'] += filesize($file);
+        }
+
+        $stats['npc_count'] = count($npcNames);
+    }
+
+    echo json_encode($stats);
+    exit;
+}
+
+// AJAX handler: Clear cache
+if (isset($_GET["action"]) && $_GET["action"] === "clear_cache" && $_SERVER["REQUEST_METHOD"] === "POST") {
+    header('Content-Type: application/json');
+    $tempDir = $enginePath . "temp/";
+    $cleared = 0;
+    $errors = [];
+
+    if (is_dir($tempDir)) {
+        $patterns = [
+            "combined_dialogue_cache_*.tmp",
+            "system_cache_*.tmp",
+            "sync_hash_*.tmp"
+        ];
+
+        foreach ($patterns as $pattern) {
+            $files = glob($tempDir . $pattern);
+            foreach ($files as $file) {
+                if (@unlink($file)) {
+                    $cleared++;
+                } else {
+                    $errors[] = basename($file);
+                }
+            }
+        }
+    }
+
+    echo json_encode([
+        'success' => empty($errors),
+        'cleared' => $cleared,
+        'errors' => $errors
+    ]);
+    exit;
+}
+
 $TITLE = "🧠 CHIM - LLM Connectors";
 ob_start();
 include(__DIR__.DIRECTORY_SEPARATOR."../tmpl/head.html");
@@ -406,7 +491,8 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                 <!-- Caching Settings (shown only for cached connectors) -->
                 <div id="caching_settings" style="display:none; margin-top:16px; padding:12px; border:1px solid #4a4a4a; border-radius:8px; background:#1a1a1a;">
                     <div style="font-weight:600; color:#e9efff; margin-bottom:4px;">🔄 Caching Settings</div>
-                    <div style="font-size:11px; color:#888; margin-bottom:12px;">OpenRouter Cache Connector v1.4 for CHIM 2.0.3 | 2026/01/21</div>
+                    <div style="font-size:11px; color:#888; margin-bottom:8px;">OpenRouter Cache Connector v2.0.1 for CHIM 2.3.3</div>
+                    <div style="font-size:11px; color:#b08d57; margin-bottom:12px; padding:6px 8px; background:rgba(176,141,87,0.1); border-radius:4px;">⚠️ Note: Web search ("Skyrim search:") is not currently supported by the cached connector.</div>
 
                     <label for='provider_caching'>Provider Caching Type</label><br>
                     <select name="metadata[provider_caching]" id="provider_caching">
@@ -468,10 +554,10 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                     </div>
 
                     <div style="margin-top:12px;">
-                        <label for='cache_invalidation_mode'><span class='tip-label' data-tip='When to invalidate dialogue cache. Time-based = expires after 1h inactivity. Sync-updates = also invalidate on profile/memory updates (experimental).'>Cache Invalidation</span></label><br>
+                        <label for='cache_invalidation_mode'><span class='tip-label' data-tip='When to invalidate dialogue cache. Time-based = expires after 1h inactivity. Sync-updates = also invalidate when dynamic profile or middle-term memory changes.'>Cache Invalidation</span></label><br>
                         <select name='metadata[cache_invalidation_mode]' id='cache_invalidation_mode'>
                             <option value="time_based" <?= ($metadata['cache_invalidation_mode'] ?? 'time_based') === 'time_based' ? 'selected' : '' ?>>Time-based (1h inactivity)</option>
-                            <option value="sync_updates" <?= ($metadata['cache_invalidation_mode'] ?? '') === 'sync_updates' ? 'selected' : '' ?>>Sync with updates (experimental)</option>
+                            <option value="sync_updates" <?= ($metadata['cache_invalidation_mode'] ?? '') === 'sync_updates' ? 'selected' : '' ?>>Sync with profile/memory updates</option>
                         </select>
                     </div>
 
@@ -483,6 +569,16 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                     <div style="margin-top:12px;">
                         <label for='custom_last_instruction'><span class='tip-label' data-tip='Custom text inserted as second-to-last element in dialogue history (current user message is always last). Appears right before user current request.'>Custom Last Instruction</span></label><br>
                         <textarea name='metadata[custom_last_instruction]' id='custom_last_instruction' rows='3' style='width:100%; box-sizing:border-box;'><?= htmlspecialchars($metadata['custom_last_instruction'] ?? '') ?></textarea>
+                    </div>
+
+                    <!-- Cache Management Section -->
+                    <div style="margin-top:16px; padding-top:12px; border-top:1px solid #3a3a3a;">
+                        <div style="font-weight:600; color:#e9efff; margin-bottom:8px;">📊 Cache Status</div>
+                        <div id="cache_stats_display" style="font-size:12px; color:#aaa; background:#0d0d0d; padding:8px; border-radius:4px; margin-bottom:8px;">
+                            <em>Loading cache statistics...</em>
+                        </div>
+                        <button type="button" id="btn_clear_cache" class="btn-action" style="background:#6b2222; border:1px solid #8b3333; color:#fff; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:12px;" onclick="clearNpcCache()">🗑️ Clear Cache for All NPCs</button>
+                        <span id="cache_clear_status" style="margin-left:8px; font-size:11px; color:#888;"></span>
                     </div>
                 </div>
             </div>
@@ -932,6 +1028,94 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
         }
         modelInput.addEventListener('change', () => { clearProviderIfOpenRouter(); maybeAutofillProvider(); if (isOpen && providersCache) renderList(providersCache, providerInput.value, getRelevantProviderSlugs()); });
         modelInput.addEventListener('input', () => { clearProviderIfOpenRouter(); maybeAutofillProvider(); if (isOpen && providersCache) renderList(providersCache, providerInput.value, getRelevantProviderSlugs()); });
+    })();
+
+    // Cache Management Functions
+    (function(){
+        // Load cache stats when caching settings are visible
+        function loadCacheStats() {
+            const statsDiv = document.getElementById('cache_stats_display');
+            if (!statsDiv) return;
+
+            fetch('llm_connectors.php?action=cache_stats')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) {
+                        statsDiv.innerHTML = '<span style="color:#ff6b6b;">' + data.error + '</span>';
+                        return;
+                    }
+                    let html = '<div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">';
+                    html += '<div><strong>Total NPCs cached:</strong> ' + (data.npc_count || 0) + '</div>';
+                    html += '<div><strong>Total size:</strong> ' + formatBytes(data.total_size || 0) + '</div>';
+                    if (data.oldest_cache) {
+                        html += '<div><strong>Oldest cache:</strong> ' + formatAge(data.oldest_age || 0) + '</div>';
+                    }
+                    if (data.total_entries) {
+                        html += '<div><strong>Total entries:</strong> ' + data.total_entries + '</div>';
+                    }
+                    html += '</div>';
+                    statsDiv.innerHTML = html;
+                })
+                .catch(e => {
+                    statsDiv.innerHTML = '<span style="color:#ff6b6b;">Failed to load stats</span>';
+                });
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        function formatAge(seconds) {
+            if (seconds < 60) return seconds + 's';
+            if (seconds < 3600) return Math.floor(seconds/60) + 'm';
+            return Math.floor(seconds/3600) + 'h ' + Math.floor((seconds%3600)/60) + 'm';
+        }
+
+        window.clearNpcCache = function() {
+            if (!confirm('This will clear all cached dialogue history for all NPCs. Continue?')) return;
+
+            const statusEl = document.getElementById('cache_clear_status');
+            const btn = document.getElementById('btn_clear_cache');
+            if (statusEl) statusEl.textContent = 'Clearing...';
+            if (btn) btn.disabled = true;
+
+            fetch('llm_connectors.php?action=clear_cache', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        if (statusEl) statusEl.innerHTML = '<span style="color:#4ade80;">✓ Cleared ' + data.cleared + ' files</span>';
+                        loadCacheStats();
+                    } else {
+                        if (statusEl) statusEl.innerHTML = '<span style="color:#ff6b6b;">Error: ' + (data.error || 'Unknown') + '</span>';
+                    }
+                })
+                .catch(e => {
+                    if (statusEl) statusEl.innerHTML = '<span style="color:#ff6b6b;">Request failed</span>';
+                })
+                .finally(() => {
+                    if (btn) btn.disabled = false;
+                    setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
+                });
+        };
+
+        // Load stats when caching settings become visible
+        const cachingSettingsDiv = document.getElementById('caching_settings');
+        if (cachingSettingsDiv) {
+            const observer = new MutationObserver(function(mutations) {
+                if (cachingSettingsDiv.style.display !== 'none') {
+                    loadCacheStats();
+                }
+            });
+            observer.observe(cachingSettingsDiv, { attributes: true, attributeFilter: ['style'] });
+            // Initial load if already visible
+            if (cachingSettingsDiv.style.display !== 'none') {
+                loadCacheStats();
+            }
+        }
     })();
     </script>
     <?php if ($noticeMsg !== ''): ?>
@@ -1475,7 +1659,8 @@ $effortLevel = $metadataArr["effort_level"] ?? '';
             <!-- Caching Settings (shown only for cached connectors) - MAIN EDITOR -->
             <div id="caching_settings_main" style="display:none; margin-top:16px; padding:12px; border:1px solid #4a4a4a; border-radius:8px; background:#1a1a1a;">
                 <div style="font-weight:600; color:#e9efff; margin-bottom:4px;">🔄 Caching Settings</div>
-                <div style="font-size:11px; color:#888; margin-bottom:12px;">OpenRouter Cache Connector v1.4 for CHIM 2.0.3 | 2026/01/21</div>
+                <div style="font-size:11px; color:#888; margin-bottom:8px;">OpenRouter Cache Connector v2.0.1 for CHIM 2.3.3</div>
+                <div style="font-size:11px; color:#b08d57; margin-bottom:12px; padding:6px 8px; background:rgba(176,141,87,0.1); border-radius:4px;">⚠️ Note: Web search ("Skyrim search:") is not currently supported by the cached connector.</div>
 
                 <label for='provider_caching_main'>Provider Caching Type</label><br>
                 <select name="metadata[provider_caching]" id="provider_caching_main">
@@ -1537,10 +1722,10 @@ $effortLevel = $metadataArr["effort_level"] ?? '';
                 </div>
 
                 <div style="margin-top:12px;">
-                    <label for='cache_invalidation_mode_main'><span class='tip-label' data-tip='When to invalidate dialogue cache. Time-based = expires after 1h inactivity. Sync-updates = also invalidate on profile/memory updates (experimental).'>Cache Invalidation</span></label><br>
+                    <label for='cache_invalidation_mode_main'><span class='tip-label' data-tip='When to invalidate dialogue cache. Time-based = expires after 1h inactivity. Sync-updates = also invalidate when dynamic profile or middle-term memory changes.'>Cache Invalidation</span></label><br>
                     <select name='metadata[cache_invalidation_mode]' id='cache_invalidation_mode_main'>
                         <option value="time_based" <?= ($metadata_main['cache_invalidation_mode'] ?? 'time_based') === 'time_based' ? 'selected' : '' ?>>Time-based (1h inactivity)</option>
-                        <option value="sync_updates" <?= ($metadata_main['cache_invalidation_mode'] ?? '') === 'sync_updates' ? 'selected' : '' ?>>Sync with updates (experimental)</option>
+                        <option value="sync_updates" <?= ($metadata_main['cache_invalidation_mode'] ?? '') === 'sync_updates' ? 'selected' : '' ?>>Sync with profile/memory updates</option>
                     </select>
                 </div>
 
@@ -1552,6 +1737,16 @@ $effortLevel = $metadataArr["effort_level"] ?? '';
                 <div style="margin-top:12px;">
                     <label for='custom_last_instruction_main'><span class='tip-label' data-tip='Custom text inserted as second-to-last element in dialogue history (current user message is always last). Appears right before user current request.'>Custom Last Instruction</span></label><br>
                     <textarea name='metadata[custom_last_instruction]' id='custom_last_instruction_main' rows='3' style='width:100%; box-sizing:border-box;'><?= htmlspecialchars($metadata_main['custom_last_instruction'] ?? '') ?></textarea>
+                </div>
+
+                <!-- Cache Management Section (Main Editor) -->
+                <div style="margin-top:16px; padding-top:12px; border-top:1px solid #3a3a3a;">
+                    <div style="font-weight:600; color:#e9efff; margin-bottom:8px;">📊 Cache Status</div>
+                    <div id="cache_stats_display_main" style="font-size:12px; color:#aaa; background:#0d0d0d; padding:8px; border-radius:4px; margin-bottom:8px;">
+                        <em>Loading cache statistics...</em>
+                    </div>
+                    <button type="button" id="btn_clear_cache_main" class="btn-action" style="background:#6b2222; border:1px solid #8b3333; color:#fff; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:12px;" onclick="clearNpcCacheMain()">🗑️ Clear Cache for All NPCs</button>
+                    <span id="cache_clear_status_main" style="margin-left:8px; font-size:11px; color:#888;"></span>
                 </div>
             </div>
         </div>
@@ -1966,6 +2161,93 @@ function llmClamp(rangeId, numberId, min, max){ const r = document.getElementByI
     }
     modelInput.addEventListener('change', () => { clearProviderIfOpenRouter(); maybeAutofillProvider(); if (isOpen && providersCache) renderList(providersCache, providerInput.value, getRelevantProviderSlugs()); });
     modelInput.addEventListener('input', () => { clearProviderIfOpenRouter(); maybeAutofillProvider(); if (isOpen && providersCache) renderList(providersCache, providerInput.value, getRelevantProviderSlugs()); });
+})();
+
+// Cache Management Functions (Main Editor)
+(function(){
+    function loadCacheStatsMain() {
+        const statsDiv = document.getElementById('cache_stats_display_main');
+        if (!statsDiv) return;
+
+        fetch('llm_connectors.php?action=cache_stats')
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    statsDiv.innerHTML = '<span style="color:#ff6b6b;">' + data.error + '</span>';
+                    return;
+                }
+                let html = '<div style="display:grid; grid-template-columns:1fr 1fr; gap:4px;">';
+                html += '<div><strong>Total NPCs cached:</strong> ' + (data.npc_count || 0) + '</div>';
+                html += '<div><strong>Total size:</strong> ' + formatBytesMain(data.total_size || 0) + '</div>';
+                if (data.oldest_cache) {
+                    html += '<div><strong>Oldest cache:</strong> ' + formatAgeMain(data.oldest_age || 0) + '</div>';
+                }
+                if (data.total_entries) {
+                    html += '<div><strong>Total entries:</strong> ' + data.total_entries + '</div>';
+                }
+                html += '</div>';
+                statsDiv.innerHTML = html;
+            })
+            .catch(e => {
+                statsDiv.innerHTML = '<span style="color:#ff6b6b;">Failed to load stats</span>';
+            });
+    }
+
+    function formatBytesMain(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    function formatAgeMain(seconds) {
+        if (seconds < 60) return seconds + 's';
+        if (seconds < 3600) return Math.floor(seconds/60) + 'm';
+        return Math.floor(seconds/3600) + 'h ' + Math.floor((seconds%3600)/60) + 'm';
+    }
+
+    window.clearNpcCacheMain = function() {
+        if (!confirm('This will clear all cached dialogue history for all NPCs. Continue?')) return;
+
+        const statusEl = document.getElementById('cache_clear_status_main');
+        const btn = document.getElementById('btn_clear_cache_main');
+        if (statusEl) statusEl.textContent = 'Clearing...';
+        if (btn) btn.disabled = true;
+
+        fetch('llm_connectors.php?action=clear_cache', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    if (statusEl) statusEl.innerHTML = '<span style="color:#4ade80;">✓ Cleared ' + data.cleared + ' files</span>';
+                    loadCacheStatsMain();
+                } else {
+                    if (statusEl) statusEl.innerHTML = '<span style="color:#ff6b6b;">Error: ' + (data.error || 'Unknown') + '</span>';
+                }
+            })
+            .catch(e => {
+                if (statusEl) statusEl.innerHTML = '<span style="color:#ff6b6b;">Request failed</span>';
+            })
+            .finally(() => {
+                if (btn) btn.disabled = false;
+                setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 5000);
+            });
+    };
+
+    // Load stats when main caching settings become visible
+    const cachingSettingsMainDiv = document.getElementById('caching_settings_main');
+    if (cachingSettingsMainDiv) {
+        const observer = new MutationObserver(function(mutations) {
+            if (cachingSettingsMainDiv.style.display !== 'none') {
+                loadCacheStatsMain();
+            }
+        });
+        observer.observe(cachingSettingsMainDiv, { attributes: true, attributeFilter: ['style'] });
+        // Initial load if already visible
+        if (cachingSettingsMainDiv.style.display !== 'none') {
+            loadCacheStatsMain();
+        }
+    }
 })();
 </script>
 

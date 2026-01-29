@@ -289,6 +289,69 @@ class openrouterjsoncached
         return $b_res;
     }
 
+    /**
+     * Check if cache should be invalidated based on sync_updates mode
+     * Queries NPC extended_data for dynamic profile and middle-term memory changes
+     */
+    private function _checkSyncInvalidation($herikaName) {
+        // Don't process for narrator or default
+        if ($herikaName === 'The Narrator' || $herikaName === 'default_herika') {
+            return;
+        }
+
+        try {
+            // Load NpcMaster if not already available
+            $enginePath = __DIR__ . DIRECTORY_SEPARATOR . ".." . DIRECTORY_SEPARATOR;
+            if (!class_exists('NpcMaster')) {
+                if (file_exists($enginePath . "lib/npc_master.class.php")) {
+                    require_once($enginePath . "lib/npc_master.class.php");
+                } else {
+                    logMessage("NpcMaster class not found - sync_updates unavailable", null, 'WARN');
+                    return;
+                }
+            }
+
+            // Get NPC data
+            $npcMaster = new \NpcMaster();
+            $npcData = $npcMaster->getByName($herikaName);
+
+            if (!$npcData) {
+                logMessage("NPC data not found for {$herikaName} - sync_updates skipped", null, 'WARN');
+                return;
+            }
+
+            // Get extended data (contains dynamic profile and middle_term_memory)
+            $extendedData = $npcMaster->getExtendedData($npcData);
+
+            // Extract relevant fields for hash
+            $profileData = [];
+            $memoryData = null;
+
+            // Dynamic profile fields
+            $profileFields = ['personality', 'relationships', 'occupation', 'skills', 'speechstyle', 'goals'];
+            foreach ($profileFields as $field) {
+                if (isset($extendedData[$field])) {
+                    $profileData[$field] = $extendedData[$field];
+                }
+            }
+
+            // Middle-term memory
+            if (isset($extendedData['middle_term_memory']) && is_array($extendedData['middle_term_memory'])) {
+                $memoryData = $extendedData['middle_term_memory'];
+            }
+
+            // Check if invalidation is needed
+            if (shouldInvalidateSyncCache($herikaName, $this->_responseFormat, $profileData, $memoryData)) {
+                // Clear the cache files
+                $result = clearNpcCacheFiles($herikaName, $this->_responseFormat);
+                logMessage("Sync invalidation triggered for {$herikaName}: cleared {$result['cleared']} files");
+            }
+
+        } catch (\Exception $e) {
+            logMessage("Error in sync invalidation check: " . $e->getMessage(), null, 'ERROR');
+        }
+    }
+
     // ================================================================================
     // OPEN METHOD - Split into 4 parts for caching support
     // Part 1: Configuration and initialization
@@ -375,11 +438,14 @@ class openrouterjsoncached
             : 'accumulate';
 
         // Cache invalidation mode (NEW in v2)
-        // NOTE: 'sync_updates' mode is not yet fully implemented - falls back to 'time_based'
-        // TODO: Implement sync logic to invalidate cache when dynamic profile/middle-term memory updates
         $this->_cacheInvalidationMode = isset($GLOBALS["CONNECTOR"][$this->name]["cache_invalidation_mode"])
             ? $GLOBALS["CONNECTOR"][$this->name]["cache_invalidation_mode"]
             : 'time_based';
+
+        // Sync_updates cache invalidation - check if profile/memory has changed
+        if ($this->_cacheInvalidationMode === 'sync_updates') {
+            $this->_checkSyncInvalidation($herikaName);
+        }
 
         // Enforce dependency: target required if actions enabled
         if ($this->_includeActions) {

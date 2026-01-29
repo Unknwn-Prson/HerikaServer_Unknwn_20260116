@@ -610,3 +610,183 @@ function validateActionName($action) {
     logMessage("Invalid action '$action' detected, defaulting to 'Talk'", null, 'ERROR');
     return 'Talk';
 }
+
+/**
+ * Clear all cache files for a specific NPC (for sync_updates invalidation)
+ * @param string $npcName The NPC name (used in cache file naming)
+ * @param string|null $responseFormat Optional response format (json/simple) - if null, clears both
+ * @return array ['cleared' => int, 'errors' => array]
+ */
+function clearNpcCacheFiles($npcName, $responseFormat = null) {
+    $tempDir = __DIR__ . "/../temp/";
+    $cleared = 0;
+    $errors = [];
+
+    if (!is_dir($tempDir)) {
+        return ['cleared' => 0, 'errors' => ['Cache directory does not exist']];
+    }
+
+    $formats = $responseFormat ? [$responseFormat] : ['json', 'simple'];
+
+    foreach ($formats as $format) {
+        $cacheFiles = [
+            "system_cache_{$format}_{$npcName}.tmp",
+            "combined_dialogue_cache_{$format}_{$npcName}.tmp",
+            "sync_hash_{$format}_{$npcName}.tmp"
+        ];
+
+        foreach ($cacheFiles as $cacheFile) {
+            $fullPath = $tempDir . $cacheFile;
+            if (file_exists($fullPath)) {
+                if (@unlink($fullPath)) {
+                    $cleared++;
+                    logMessage("Cleared cache file: $cacheFile");
+                } else {
+                    $errors[] = "Failed to delete: $cacheFile";
+                    logMessage("Failed to clear cache file: $cacheFile", null, 'ERROR');
+                }
+            }
+        }
+    }
+
+    return ['cleared' => $cleared, 'errors' => $errors];
+}
+
+/**
+ * Get sync hash for profile/memory data (for sync_updates mode)
+ * @param string $npcName The NPC name
+ * @param string $responseFormat The response format (json/simple)
+ * @return string|null The stored hash, or null if not found
+ */
+function getSyncHash($npcName, $responseFormat = 'json') {
+    $hashFile = __DIR__ . "/../temp/sync_hash_{$responseFormat}_{$npcName}.tmp";
+    if (file_exists($hashFile) && is_readable($hashFile)) {
+        return trim(file_get_contents($hashFile));
+    }
+    return null;
+}
+
+/**
+ * Store sync hash for profile/memory data (for sync_updates mode)
+ * @param string $npcName The NPC name
+ * @param string $hash The hash to store
+ * @param string $responseFormat The response format (json/simple)
+ * @return bool Success
+ */
+function setSyncHash($npcName, $hash, $responseFormat = 'json') {
+    $tempDir = __DIR__ . "/../temp/";
+    if (!is_dir($tempDir)) {
+        @mkdir($tempDir, 0755, true);
+    }
+    $hashFile = $tempDir . "sync_hash_{$responseFormat}_{$npcName}.tmp";
+    return file_put_contents($hashFile, $hash) !== false;
+}
+
+/**
+ * Calculate sync hash from profile and memory data
+ * @param array|null $profileData Dynamic profile data (extended_data fields)
+ * @param array|null $memoryData Middle-term memory data
+ * @return string MD5 hash of combined data
+ */
+function calculateSyncHash($profileData, $memoryData) {
+    $dataToHash = [
+        'profile' => $profileData,
+        'memory' => $memoryData
+    ];
+    return md5(json_encode($dataToHash, JSON_UNESCAPED_UNICODE));
+}
+
+/**
+ * Check if cache should be invalidated based on sync_updates mode
+ * @param string $npcName The NPC name
+ * @param string $responseFormat The response format (json/simple)
+ * @param array|null $currentProfileData Current dynamic profile data
+ * @param array|null $currentMemoryData Current middle-term memory data
+ * @return bool True if cache should be invalidated
+ */
+function shouldInvalidateSyncCache($npcName, $responseFormat, $currentProfileData, $currentMemoryData) {
+    $currentHash = calculateSyncHash($currentProfileData, $currentMemoryData);
+    $storedHash = getSyncHash($npcName, $responseFormat);
+
+    if ($storedHash === null) {
+        // No stored hash - first run, store current and don't invalidate
+        setSyncHash($npcName, $currentHash, $responseFormat);
+        logMessage("Sync hash initialized for {$npcName}");
+        return false;
+    }
+
+    if ($currentHash !== $storedHash) {
+        // Data changed - invalidate cache and update hash
+        logMessage("Sync hash mismatch for {$npcName} - invalidating cache");
+        logMessage("  Stored: {$storedHash}");
+        logMessage("  Current: {$currentHash}");
+        setSyncHash($npcName, $currentHash, $responseFormat);
+        return true;
+    }
+
+    // No change
+    return false;
+}
+
+/**
+ * Get cache statistics for an NPC
+ * @param string $npcName The NPC name
+ * @param string $responseFormat The response format (json/simple)
+ * @return array Cache statistics
+ */
+function getCacheStats($npcName, $responseFormat = 'json') {
+    $tempDir = __DIR__ . "/../temp/";
+    $stats = [
+        'npc_name' => $npcName,
+        'response_format' => $responseFormat,
+        'system_cache' => null,
+        'dialogue_cache' => null,
+        'total_size_bytes' => 0,
+        'oldest_age_seconds' => 0
+    ];
+
+    $systemFile = $tempDir . "system_cache_{$responseFormat}_{$npcName}.tmp";
+    $dialogueFile = $tempDir . "combined_dialogue_cache_{$responseFormat}_{$npcName}.tmp";
+
+    if (file_exists($systemFile)) {
+        $mtime = filemtime($systemFile);
+        $size = filesize($systemFile);
+        $age = time() - $mtime;
+        $stats['system_cache'] = [
+            'exists' => true,
+            'size_bytes' => $size,
+            'age_seconds' => $age,
+            'last_modified' => date('Y-m-d H:i:s', $mtime)
+        ];
+        $stats['total_size_bytes'] += $size;
+        $stats['oldest_age_seconds'] = max($stats['oldest_age_seconds'], $age);
+    }
+
+    if (file_exists($dialogueFile)) {
+        $mtime = filemtime($dialogueFile);
+        $size = filesize($dialogueFile);
+        $age = time() - $mtime;
+
+        // Try to count entries in the dialogue cache
+        $entryCount = 0;
+        $content = @file_get_contents($dialogueFile);
+        if ($content !== false) {
+            $decoded = json_decode($content, true);
+            if (is_array($decoded)) {
+                $entryCount = count($decoded);
+            }
+        }
+
+        $stats['dialogue_cache'] = [
+            'exists' => true,
+            'size_bytes' => $size,
+            'age_seconds' => $age,
+            'entry_count' => $entryCount,
+            'last_modified' => date('Y-m-d H:i:s', $mtime)
+        ];
+        $stats['total_size_bytes'] += $size;
+        $stats['oldest_age_seconds'] = max($stats['oldest_age_seconds'], $age);
+    }
+
+    return $stats;
+}
