@@ -1,338 +1,326 @@
-# OpenRouter Cached Connector v2 - Implementation Documentation
+# OpenRouter Cached Connector v2.0.1 - Technical Implementation
 
-This document tracks the implementation process for porting the cached connector from CHIM 2.0.5 to CHIM 2.2.
+This document provides technical details for developers and maintainers of the cached connector.
 
-## Overview
+## Architecture Overview
 
-**Base file:** `origin/aiagent:connector/openrouterjson.php` (CHIM 2.2, 1454 lines)
-**Target file:** `connector/openrouterjsoncached_v2.php`
-**Reference:** `connector/openrouterjsoncached.php` (v1.4 for CHIM 2.0.5)
+### Version Information
+- **Current Version**: v2.0.1
+- **Target CHIM Version**: 2.3.3
+- **Base Connector**: `openrouterjson.php` from CHIM 2.3.3
 
-## Architecture Differences
+### Design Philosophy
+The cached connector is designed as a **streaming-only** connector that optimizes API costs by caching repetitive context data. It maintains full compatibility with CHIM's connector interface while adding provider-specific caching strategies.
 
-The cached connector fundamentally restructures how requests are processed:
+## File Structure
 
-| Aspect | Regular Connector | Cached Connector |
-|--------|-------------------|------------------|
-| `open()` method | Monolithic (~600 lines) | Split into 4 parts |
-| Context handling | Pass-through | Temp file caching with deduplication |
-| Response format | JSON only | JSON or Simple format |
-| Sentence streaming | N/A | Built-in for simple format |
-| `fast_request()` | Available | Removed (streaming-only) |
+```
+connector/
+├── openrouterjsoncached.php         # Main connector class (1629 lines)
+├── openrouterjsoncached_helpers.php # Helper functions (750+ lines)
+└── __jpd.php                        # JSON parsing dependency
 
-## Compatibility
+conf/
+└── conf_schema.json                 # Connector configuration schema
 
-**Compatible connector types:**
-- CORE_CONNECTOR_DIRECTOR (streaming)
-- Main conversation connector (CONNECTORS selection)
+lib/core/
+└── llm_connector.class.php          # Connector loader with defaults
 
-**Incompatible connector types (uses fast_request):**
-- CORE_CONNECTOR_MEDIUMTERM
-- CORE_CONNECTOR_OGHMA_CUSTOM
-- CORE_CONNECTOR_PLAYER
-- CORE_CONNECTOR_PROFILES
-- CORE_CONNECTOR_SUMMARY
-
-These must be hidden from selection in the UI/schema.
-
----
-
-## Implementation Steps
-
-### Step 1: Class Rename and Metadata
-**Status:** ✅ Complete
-
-Changes:
-- [ ] Rename class from `openrouterjson` to `openrouterjsoncached`
-- [ ] Add VERSION constant after class declaration
-- [ ] Add header comment describing the connector
-- [ ] Update `$this->name` in constructor to `"openrouterjsoncached"`
-
-```php
-// Add after line 5:
-// Cached version of openrouterjson connector with Anthropic/OpenAI/Gemini cache support
-// Based on CHIM 2.2 architecture with additional caching and response format features
-
-// Change line 6:
-class openrouterjsoncached
-
-// Add after class opening:
-const VERSION = 'OpenRouter Cache Connector v2.0 for CHIM 2.2 | 2026/01/28';
-
-// Change in constructor:
-$this->name="openrouterjsoncached";
+ui/
+├── global_settings.php              # Global settings with connector filter
+└── core/
+    └── llm_connectors.php           # Connector UI with caching controls
 ```
 
----
+## Class Structure
 
-### Step 2: Add New Properties
-**Status:** ✅ Complete
-
-Add these properties after `$_lastStreamedObject` (around line 44):
+### Main Class: `openrouterjsoncached`
 
 ```php
-// Caching-specific properties
-private $_provider_caching;
-private $_responseFormat;
-private $_includeMood;
-private $_includeActions;
-private $_includeTarget;
-private $_includeListener;
-private $_defaultTarget;
-private $_simpleFormatParsed;
-private $_usedPrefill;
-private $_prefillContent;
-private $_simpleFormatMessageStart;
-private $_lastReturnedLength;
-public $_jsonResponsesEncoded = array();
+class openrouterjsoncached {
+    const VERSION = 'OpenRouter Cache Connector v2.0.1 for CHIM 2.3.3 | 2026/01/29';
 
-// Simple format parser state variables
-private $_reasoningState;
-private $_reasoningTagType;
-private $_metadataEnd;
-private $_sentencesSent;
-private $_metadataGroups;
-private $_flushedPartial;
+    // Core properties (inherited from openrouterjson)
+    private $_model, $_url, $_buffer, $_timeout, etc.
 
-// Memory handling mode (NEW in v2)
-private $_memoryMode; // 'accumulate' or 'fresh'
-```
+    // Caching-specific properties
+    private $_provider_caching;      // 'Anthropic', 'OpenAI', 'Gemini'
+    private $_responseFormat;        // 'json', 'simple'
+    private $_memoryMode;            // 'accumulate', 'fresh'
+    private $_cacheInvalidationMode; // 'time_based', 'sync_updates'
 
----
+    // Response format controls
+    private $_includeMood, $_includeActions, $_includeTarget, $_includeListener;
 
-### Step 3: Update Constructor
-**Status:** ✅ Complete
-
-Changes to constructor:
-- [ ] Change `$this->name` to `"openrouterjsoncached"`
-- [ ] Initialize all new caching properties
-- [ ] Add helper file inclusion
-- [ ] Add initialization log message
-
-```php
-// After existing initializations, add:
-
-// Initialize caching properties
-$this->_provider_caching = 'Anthropic';
-$this->_responseFormat = 'json';
-$this->_includeMood = true;
-$this->_includeActions = true;
-$this->_includeTarget = true;
-$this->_includeListener = true;
-$this->_defaultTarget = '';
-$this->_simpleFormatParsed = false;
-$this->_usedPrefill = false;
-$this->_prefillContent = '';
-$this->_simpleFormatMessageStart = -1;
-$this->_lastReturnedLength = 0;
-$this->_jsonResponsesEncoded = array();
-$this->_memoryMode = 'accumulate'; // default
-
-// Initialize simple format parser state
-$this->_reasoningState = 'NORMAL';
-$this->_reasoningTagType = '';
-$this->_metadataEnd = -1;
-$this->_sentencesSent = 0;
-$this->_metadataGroups = [];
-$this->_flushedPartial = false;
-
-require_once(__DIR__."/__jpd.php");
-require_once(__DIR__."/openrouterjsoncached_helpers.php");
-
-logMessage("[{$this->name}] OpenRouter Cached Connector v" . self::VERSION . " initialized");
-```
-
----
-
-### Step 4: Add New Methods
-**Status:** ✅ Complete
-
-New methods to add:
-
-#### 4.1 `handlesSentenceSplitting()`
-```php
-public function handlesSentenceSplitting() {
-    return ($this->_responseFormat === 'simple');
+    // Simple format parser state
+    private $_reasoningState, $_metadataEnd, $_sentencesSent, etc.
 }
 ```
 
-#### 4.2 `isAlwaysReasoningModel()`
-Detects models that always have reasoning enabled (o1, o3, o4, gpt-5, DeepSeek-R1).
+### Public Interface
 
-#### 4.3 Simple Format Parser Methods
-- `_preprocessReasoningTags()` - Strip <think>/<thinking>/<answer> tags
-- `_extractMetadata()` - Extract (mood)(listener)(action)(target) groups
-- `_mapGroupsToFields()` - Map groups to global variables
-- `_flushRemainingSimpleFormat()` - End-of-stream flushing
-- `_splitIntoSentences()` - Split on sentence endings (with trailing space fix)
-- `_parseAndReturnContent()` - Unified content parsing dispatcher
+| Method | Description |
+|--------|-------------|
+| `__construct()` | Initialize connector with defaults |
+| `open($contextData, $customParms)` | Process context and open API stream |
+| `process()` | Process streaming chunks |
+| `close($callName='')` | Close stream and cleanup |
+| `processActions($result)` | Extract actions from response |
+| `handlesSentenceSplitting()` | Returns true for simple format |
 
----
+### Private Methods - open() Split
 
-### Step 5: Rewrite open() Method
-**Status:** ✅ Complete
+The `open()` method is split into 4 parts for maintainability:
 
-The monolithic `open()` method must be split into 4 parts:
+| Part | Method | Responsibility |
+|------|--------|----------------|
+| 1 | `open()` | Configuration loading, sync invalidation check |
+| 2 | `_openPart2()` | System prompt processing, cache file setup |
+| 3 | `_openPart3()` | Dialogue history caching, cache control placement |
+| 4 | `_openPart4()` | Payload construction, API request |
 
-#### Part 1: `open()` - Initialization and Configuration
-- Read all config parameters
-- Set up cache file paths
-- Initialize response format settings
-- Call `_openPart2()`
+## Helper Functions
 
-#### Part 2: `_openPart2()` - System Prompt Processing
-- Extract dynamic sections (Environmental Context, etc.)
-- Build action prompt with minimize_quality_prompt filtering
-- Build format instruction (JSON template or simple format)
-- Handle custom system instruction
-- Apply cache control to system entries
-- Call `_openPart3()`
+Located in `openrouterjsoncached_helpers.php`:
 
-#### Part 3: `_openPart3()` - Dialogue History Caching
-- Process non-system context entries
-- **NEW: Filter out <memory> tags if memoryMode='fresh'**
-- Manage cached event list via `manageCharacterEventList()`
-- Calculate cache control placement
-- Handle prefill for simple format
-- **NEW: Re-add memory items at end if filtered**
-- Call `_openPart4()`
-
-#### Part 4: `_openPart4()` - Payload Construction and API Request
-- Build reasoning configuration
-- Construct final payload with caching parameters
-- Add Anthropic beta header for extended cache TTL
-- Open HTTP stream
-
-**CHIM 2.2 features to preserve:**
-- Web search detection and handling (make toggleable)
-- Zonos TTS tone support
-- Grok model detection
-- New model detection (gpt-5, gpt-oss-*)
-
----
-
-### Step 6: Rewrite process() Method
-**Status:** ✅ Complete
-
-Changes:
-- Support both Anthropic-native and OpenAI SSE formats
-- Add cache efficiency logging on message_stop
-- Call `_parseAndReturnContent()` for format-aware parsing
-- Handle simple format sentence streaming
-- **BUG FIX: Add trailing space to returned sentences**
-
----
-
-### Step 7: Rewrite close() and processActions()
-**Status:** ✅ Complete
-
-#### close()
-- Remove database audit inserts
-- Use structured log format with LOCK_EX
-- Reset stream state
-
-#### processActions()
-- Support both JSON and simple format
-- Use `extractSimpleFormatFromBuffer()` helper for simple format
-- Validate action names
-
----
-
-### Step 8: Remove fast_request()
-**Status:** ✅ Complete
-
-Remove the entire `fast_request()` method. This connector is streaming-only.
-
----
-
-## Bug Fixes in v2
-
-### BUG FIX 1: Word Joining
-**Problem:** Sentences returned without trailing spaces, causing "Hello.How are you?"
-**Fix:** In `_splitIntoSentences()` or return statements, add trailing space to sentences.
-
+### Logging
 ```php
-// In _parseAndReturnContent, around line 1401:
-return $sentence . ' ';  // Add trailing space
+logMessage($message, $context, $level, $logFile)
 ```
 
----
-
-## New Features in v2
-
-### Feature 1: Memory Handling Toggle
-**Config key:** `memory_mode`
-**Values:** `'accumulate'` (default) | `'fresh'`
-
-- `accumulate`: Memories persist in dialogue cache with deduplication (current behavior)
-- `fresh`: Memories excluded from cache, fresh each request (like regular connector)
-
-Implementation in `_openPart3()`:
+### Memory Handling
 ```php
-// Before manageCharacterEventList:
-$memoryItems = [];
-if ($this->_memoryMode === 'fresh') {
-    foreach ($contentTextToSend as $key => $item) {
-        if (strpos($item['text'], '<memory>') !== false) {
-            $memoryItems[] = $item;
-            unset($contentTextToSend[$key]);
-        }
-    }
-    $contentTextToSend = array_values($contentTextToSend);
-}
+removeDuplicateMemories($array)        // Deduplicate memory entries
+extractMemoryContent($text)            // Extract <memory> tag content
+```
 
-// After cache processing, before adding instruction:
-if ($this->_memoryMode === 'fresh' && !empty($memoryItems)) {
-    $completeEventList = array_merge($completeEventList, $memoryItems);
+### Cache Management
+```php
+manageCharacterEventList($newList, $filename, $maxLength, $maxAge)
+clearNpcCacheFiles($npcName, $responseFormat)  // NEW in v2.0.1
+getCacheStats($npcName, $responseFormat)       // NEW in v2.0.1
+```
+
+### Sync Invalidation (NEW in v2.0.1)
+```php
+getSyncHash($npcName, $responseFormat)
+setSyncHash($npcName, $hash, $responseFormat)
+calculateSyncHash($profileData, $memoryData)
+shouldInvalidateSyncCache($npcName, $responseFormat, $profileData, $memoryData)
+```
+
+### Simple Format Parsing
+```php
+buildSimpleFormatInstruction($actions, $includeMood, $includeListener, $includeActions, $includeTarget)
+extractSimpleFormatFromBuffer($buffer, $includeMood, $includeListener, $includeActions, $includeTarget)
+validateActionName($action)
+```
+
+## Caching Implementation
+
+### Cache File Naming
+```
+temp/system_cache_{format}_{npcName}.tmp
+temp/combined_dialogue_cache_{format}_{npcName}.tmp
+temp/sync_hash_{format}_{npcName}.tmp
+```
+
+Where:
+- `{format}` = 'json' or 'simple'
+- `{npcName}` = Character name (e.g., 'Lydia')
+
+### Provider-Specific Cache Control
+
+#### Anthropic
+```php
+$cacheControlType = ["type" => "ephemeral", "ttl" => "1h"];
+// Placed at calculated index based on dialogue_cache_uncached_count
+$completeEventList[$lastIndex]["cache_control"] = $cacheControlType;
+```
+
+#### OpenAI
+```php
+// No manual cache control - uses model-native caching
+// Skip cache_control marker placement
+```
+
+#### Gemini
+```php
+// Batch-based caching
+$batchSize = $CONTEXTHISTORY - $offset;
+$batchNumber = floor($elements / $batchSize);
+$cacheIndex = ($batchNumber + 1) * $batchSize - 1;
+```
+
+### Sync Invalidation Flow (v2.0.1)
+
+```
+open() called
+    │
+    ├─ cache_invalidation_mode == 'sync_updates'?
+    │       │
+    │       └─ YES: _checkSyncInvalidation($npcName)
+    │               │
+    │               ├─ Load NPC extended_data via NpcMaster
+    │               ├─ Extract profile fields + middle_term_memory
+    │               ├─ Calculate MD5 hash of data
+    │               ├─ Compare with stored hash
+    │               │       │
+    │               │       └─ Hash mismatch?
+    │               │               │
+    │               │               └─ YES: clearNpcCacheFiles()
+    │               │                       setSyncHash(newHash)
+    │               │
+    │               └─ Continue to _openPart2()
+    │
+    └─ NO: Continue to _openPart2()
+```
+
+## Response Format Implementation
+
+### JSON Mode
+Standard CHIM JSON response processing. Uses existing JSON parsing infrastructure.
+
+### Simple Mode
+Custom parser for `(mood)(listener)(action)(target) message` format:
+
+```php
+// State machine in _preprocessReasoningTags()
+$this->_reasoningState = 'NORMAL' | 'IN_REASONING';
+
+// Metadata extraction in _extractMetadata()
+preg_match_all('/\(([^)]+)\)/', $input, $matches);
+
+// Sentence streaming in _splitIntoSentences()
+preg_split('/(?<=[.!?])\s+/', $text);
+```
+
+## UI Integration
+
+### AJAX Endpoints (llm_connectors.php)
+
+```php
+// Cache statistics
+GET llm_connectors.php?action=cache_stats
+Response: {"npc_count": 5, "total_size": 102400, "total_entries": 450, "oldest_age": 1800}
+
+// Cache clear
+POST llm_connectors.php?action=clear_cache
+Response: {"success": true, "cleared": 15, "errors": []}
+```
+
+### JavaScript Functions
+
+```javascript
+// Embedded editor
+window.clearNpcCache()
+loadCacheStats()
+
+// Main editor
+window.clearNpcCacheMain()
+loadCacheStatsMain()
+```
+
+## Configuration Schema
+
+### conf_schema.json Entry
+
+```json
+"openrouterjsoncached": {
+    "_title": "OpenRouter API (JSON) with Caching",
+    "provider_caching": {"type":"select","values":["Anthropic","OpenAI","Gemini"]},
+    "response_format": {"type":"select","values":["json","simple"]},
+    "memory_mode": {"type":"select","values":["accumulate","fresh"]},
+    "cache_invalidation_mode": {"type":"select","values":["time_based","sync_updates"]},
+    "dialogue_cache_uncached_count": {"type":"integer"},
+    "max_dialogue_cache_context_size": {"type":"integer"},
+    // ... additional settings
 }
 ```
 
-### Feature 2: Cache Sync with Dynamic Updates
-**Config key:** `cache_invalidation_mode`
-**Values:** `'time_based'` (default) | `'sync_updates'`
+### llm_connector.class.php Defaults
 
-- `time_based`: Current behavior (context-size + 1h inactivity)
-- `sync_updates`: Invalidate cache when dynamic profile or middle-term memory changes
+```php
+case 'openrouterjsoncached':
+    $GLOBALS["CONNECTOR"]["openrouterjsoncached"]["memory_mode"] = 'accumulate';
+    $GLOBALS["CONNECTOR"]["openrouterjsoncached"]["cache_invalidation_mode"] = 'time_based';
+    // ... decode metadata, set GLOBALS
+    break;
+```
 
-Implementation: Check NPC's `extended_data` modification timestamp against cache file timestamp.
+## Compatibility Enforcement
 
----
+### global_settings.php Filter
 
-## Supporting File Changes
+```php
+// Incompatible CORE_CONNECTOR types (use fast_request)
+$incompatibleWithCached = [
+    'CORE_CONNECTOR_PLAYER',
+    'CORE_CONNECTOR_SUMMARY',
+    'CORE_CONNECTOR_MEDIUMTERM',
+    'CORE_CONNECTOR_PROFILES'
+];
 
-### conf/conf_schema.json
-- Add `openrouterjsoncached` config block with all new settings
-- Add `memory_mode` and `cache_invalidation_mode` settings
-- Hide from incompatible CORE_CONNECTOR_* types
-
-### lib/core/llm_connector.class.php
-- Add `openrouterjsoncached` driver case in `setOldGlobals()`
-- Handle metadata JSON for extended settings
-
-### ui/core/llm_connectors.php
-- Add UI controls for cached connector settings
-- Conditional display based on feature markers
-
----
+// Skip cached connector in dropdown for these types
+if ($filterCached && $row['driver'] === 'openrouterjsoncached') {
+    continue;
+}
+```
 
 ## Testing Checklist
 
-- [ ] Syntax check: `php -l connector/openrouterjsoncached_v2.php`
-- [ ] JSON format works with Anthropic caching
-- [ ] Simple format works with sentence streaming
-- [ ] Sentences have proper spacing (no word joining)
-- [ ] Memory toggle works (accumulate vs fresh)
-- [ ] Cache invalidation modes work
-- [ ] Web search can be disabled
-- [ ] Hidden from incompatible connector types in UI
-- [ ] Middle-term memory injection works correctly
-- [ ] Dynamic profile content cached appropriately
+### Syntax Validation
+```bash
+php -l connector/openrouterjsoncached.php
+php -l connector/openrouterjsoncached_helpers.php
+```
 
----
+### Functional Tests
+- [ ] JSON format with Anthropic caching
+- [ ] Simple format with sentence streaming
+- [ ] Memory mode: accumulate (deduplication works)
+- [ ] Memory mode: fresh (memories re-sent each request)
+- [ ] Cache invalidation: time-based (1h expiry)
+- [ ] Cache invalidation: sync_updates (profile/memory changes)
+- [ ] Cache statistics display
+- [ ] Manual cache clear
+- [ ] Reasoning model support (Claude, DeepSeek, OpenAI o-series)
+- [ ] Hidden from incompatible CORE_CONNECTOR types
+
+### Integration Tests
+- [ ] New connector creation via UI
+- [ ] Connector editing and saving
+- [ ] Metadata persistence (JSON encoding/decoding)
+- [ ] Cache files created in temp/
+- [ ] Log files created in log/
+
+## Known Limitations
+
+1. **No Web Search**: "Skyrim search:" feature not implemented
+2. **No fast_request()**: Streaming-only, incompatible with summary connectors
+3. **Gemini Caching**: Ignores dialogue_cache_uncached_count setting
+4. **Sync Invalidation**: Requires NpcMaster class availability
 
 ## Version History
 
-| Version | Date | CHIM Version | Changes |
-|---------|------|--------------|---------|
-| v1.0-v1.4 | 2026-01-16 to 2026-01-21 | CHIM 2.0.3-2.0.5 | Initial implementation, Core/Additionals split |
-| v2.0 | 2026-01-28 | CHIM 2.2 | Port to CHIM 2.2, memory toggle, cache sync, bug fixes |
+| Version | Date | Changes |
+|---------|------|---------|
+| v2.0.1 | 2026-01-29 | sync_updates invalidation, cache management UI, CHIM 2.3.3 sync |
+| v2.0.0 | 2026-01-28 | Port to CHIM 2.3.3, memory mode, close() signature fix |
+| v1.4 | 2026-01-21 | Core/Additionals split for CHIM 2.0.5 |
+| v1.0-v1.3 | 2026-01-16 | Initial implementation for CHIM 2.0.3 |
+
+## Future Considerations
+
+### Potential Enhancements
+- Web search support (port from openrouterjson)
+- Per-NPC cache settings
+- Cache warming/preloading
+- Cache compression
+
+### Upstream Tracking
+Monitor `abeiro/HerikaServer` for:
+- Changes to openrouterjson.php
+- New CORE_CONNECTOR types
+- llm_connector.class.php modifications
+- conf_schema.json structure changes

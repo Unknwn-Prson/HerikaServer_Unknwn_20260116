@@ -1,97 +1,116 @@
-# OpenRouter JSON Cached Connector
+# OpenRouter Cached Connector v2.0.1
 
-A fully-featured cached version of the OpenRouter JSON connector for CHIM 2.0, with support for multiple caching providers, flexible response formats, and granular content controls.
+A high-performance cached connector for CHIM 2.3.3 with multi-provider caching support, flexible response formats, automatic cache invalidation, and comprehensive cache management tools.
+
+## Version Information
+
+| Version | CHIM Version | Release Date |
+|---------|--------------|--------------|
+| v2.0.1  | CHIM 2.3.3   | 2026-01-29   |
 
 ## Features
 
 ### Core Caching
-- **Multi-Provider Support**: Anthropic, OpenAI (o1/o3/o4-mini models), and Gemini
+- **Multi-Provider Support**: Anthropic, OpenAI, and Gemini caching systems
 - **File-Based Caching**: Separate caching for system prompts and dialogue history
 - **Dynamic Content Extraction**: Automatically separates static character info from dynamic environment data
 - **Cache Performance Logging**: Track cache efficiency with detailed metrics
 
+### Cache Management (NEW in v2.0.1)
+- **Automatic Invalidation**: Time-based (1h inactivity) or sync with profile/memory updates
+- **Cache Statistics UI**: View NPC count, total size, entry count directly in CHIM UI
+- **Manual Cache Clear**: One-click button to clear all NPC cache files
+- **Memory Mode Toggle**: Choose between accumulated (deduplicated) or fresh memory handling
+
 ### Response Format Flexibility
 - **JSON Mode** (default): Structured JSON responses with full validation
-- **Simple Mode**: Natural language format with parenthetical metadata like `(mood)(listener)(action)(target) message`
+- **Simple Mode**: Natural language format with parenthetical metadata `(mood)(listener)(action)(target) message`
+
+### Reasoning/Thinking Support
+- Full support for reasoning models (Claude 4.5, DeepSeek, OpenAI o-series)
+- Automatic reasoning token stripping from output
+- Configurable thinking tokens and effort levels
 
 ### Granular Content Controls
-- Toggle individual response components on/off:
-  - Actions list
-  - Mood requirement
-  - Target requirement
-  - Listener requirement
-- Fine-tune uncached dialogue count for optimal performance
+Toggle individual response components:
+- Actions list (Talk, Attack, Cast, etc.)
+- Mood requirement
+- Target requirement
+- Listener requirement
+
+## Installation
+
+### Quick Install (Recommended)
+1. Download `openrouterjsoncached_v2.0.1_CHIM2.3.3.zip`
+2. Extract contents directly into your HerikaServer folder
+3. Overwrite existing files when prompted
+
+### Manual Install
+Copy these files to your HerikaServer installation:
+```
+connector/openrouterjsoncached.php
+connector/openrouterjsoncached_helpers.php
+conf/conf_schema.json
+lib/core/llm_connector.class.php
+ui/core/llm_connectors.php
+ui/global_settings.php
+```
 
 ## Configuration
 
-Add this connector to your CHIM configuration:
+### UI Configuration (Recommended)
+1. Go to **CHIM UI → LLM Connectors**
+2. Create a new connector or edit existing
+3. Set **Driver** to `openrouterjsoncached`
+4. Configure settings in the **🔄 Caching Settings** section
 
-```php
-$GLOBALS["CONNECTOR"]["openrouterjsoncached"] = [
-    // Basic Configuration
-    "url" => "https://openrouter.ai/api/v1/chat/completions",
-    "API_KEY" => "your-api-key-here",
-    "model" => "anthropic/claude-3-5-sonnet-20241022",
+### Available Settings
 
-    // Caching Configuration
-    "provider_caching" => "Anthropic",  // Options: "Anthropic", "OpenAI", "Gemini"
-    "max_dialogue_cache_context_size" => 200,  // Max dialogue history items to cache
-    "dialogue_cache_uncached_count" => 4,  // Keep last N messages uncached (for freshness)
+| Setting | Options | Description |
+|---------|---------|-------------|
+| Provider Caching Type | Anthropic, OpenAI, Gemini | Which provider's caching system to use |
+| Response Format | JSON, Simple | Output format from LLM |
+| Uncached Dialogue Count | 0-10 | Recent messages to keep uncached for freshness |
+| Max Cache Context Size | Integer | Maximum dialogue entries to cache |
+| Memory Mode | Accumulate, Fresh | How to handle memory injections |
+| Cache Invalidation | Time-based, Sync | When to invalidate cache |
+| Minimize Quality Prompt | On/Off | Use minimal instructions for advanced models |
 
-    // Response Format
-    "response_format" => "json",  // Options: "json", "simple"
+### Reasoning Settings
 
-    // Granular Content Controls
-    "include_actions_list" => true,  // Include available actions in prompt
-    "include_mood_requirement" => true,  // Require mood in response
-    "include_target_requirement" => true,  // Require action target in response
-    "include_listener_requirement" => true,  // Require listener in response
+| Setting | Description |
+|---------|-------------|
+| Toggle Thinking | Enable/disable reasoning for supported models |
+| Thinking Tokens | Max tokens for reasoning (Anthropic/Gemini) |
+| Effort Level | Reasoning depth for OpenAI models (minimal/low/medium/high) |
 
-    // Standard OpenRouter Options
-    "max_tokens" => 4096,
-    "temperature" => 1.0,
-    "top_p" => 1.0,
-    "top_k" => 0,
-    "frequency_penalty" => 0,
-    "presence_penalty" => 0,
-    "repetition_penalty" => 1,
-    "min_p" => 0,
-    "top_a" => 0,
+### Advanced Settings
 
-    // Reasoning/Thinking Support
-    "toggle_thinking" => false,
-    "thinking_tokens" => 1000,
-    "effort_level" => "low",  // For OpenAI models: "low", "medium", "high"
-
-    // Custom Instructions
-    "custom_last_instruction" => "",
-    "custom_last_user_instruction" => "",
-
-    // Provider Settings
-    "PROVIDER" => "Anthropic",  // Comma-separated list for fallbacks
-];
-```
+| Setting | Description |
+|---------|-------------|
+| Custom System Instruction | Additional instruction added to system prompt |
+| Custom Last Instruction | Text inserted before user's current message |
 
 ## Cache Provider Details
 
-### Anthropic Caching
+### Anthropic Caching (Recommended)
 - Uses `cache_control` with ephemeral cache (1 hour TTL)
 - Caches system prompts automatically
-- Places cache breakpoint based on `dialogue_cache_uncached_count`
-- Requires `anthropic-beta: extended-cache-ttl-2025-04-11` header
-- Best for Claude models
+- Places cache breakpoint based on uncached dialogue count
+- Best cache hit rates and longest TTL
+- **Best for**: Claude models (claude-3.5-sonnet, claude-4, etc.)
 
 ### OpenAI Caching
-- Compatible with o1, o3, o4-mini reasoning models
 - Uses model-native caching (automatically handled)
-- Set `provider_caching` to "OpenAI" to disable manual cache control markers
-- Effort-based reasoning: "low", "medium", "high"
+- No manual cache control markers needed
+- Effort-based reasoning: minimal, low, medium, high
+- **Best for**: GPT-4, GPT-5, o1/o3/o4 reasoning models
 
 ### Gemini Caching
 - Uses batch-based caching strategy
-- Calculates cache index based on `CONTEXT_HISTORY` global
-- Optimal for long conversation contexts
-- Automatically adjusts cache placement
+- Calculates cache index based on context history
+- Optimal for very long conversations
+- **Note**: Ignores uncached dialogue count setting
 
 ## Response Format Modes
 
@@ -105,154 +124,173 @@ $GLOBALS["CONNECTOR"]["openrouterjsoncached"] = [
     "message": "I'm worried about that cave we just passed."
 }
 ```
-
 **When to use**: Maximum structure, easier debugging, full validation
 
 ### Simple Mode
 ```
 (concerned)(Player)(Talk)(Player) I'm worried about that cave we just passed.
 ```
+**When to use**: More natural LLM output, lower token usage, faster responses, less capable models
 
-**When to use**: More natural LLM output, lower token usage, faster responses
+## Cache Invalidation Modes
 
-**Configuration**: Set `response_format` to `"simple"` and configure which components to include
+### Time-Based (Default)
+- Cache expires after 1 hour of inactivity
+- Cache cleared when max context size exceeded
+- Simple, predictable behavior
 
-## Content Control Examples
+### Sync with Updates (NEW in v2.0.1)
+- Everything from time-based, PLUS:
+- Automatically detects changes in dynamic profile
+- Automatically detects changes in middle-term memory
+- Clears cache when profile/memory data changes
+- **Best for**: Games with frequently updating NPC profiles
 
-### Minimal Configuration (Dialogue Only)
-```php
-"response_format" => "simple",
-"include_actions_list" => false,
-"include_mood_requirement" => false,
-"include_target_requirement" => false,
-"include_listener_requirement" => false,
+## Memory Modes
+
+### Accumulate (Default)
+- Memories are deduplicated across requests
+- Each memory appears once in the cached context
+- More cache-efficient
+- **Best for**: Most use cases
+
+### Fresh
+- Memories placed at end of context, outside cache
+- Re-sent with each request (like regular connector)
+- **Best for**: When memories seem stale or not updating
+
+## Cache Management UI
+
+The connector includes a cache management section in the LLM Connectors UI:
+
+### Cache Statistics
+Displays real-time information:
+- **Total NPCs cached**: Number of NPCs with active cache files
+- **Total size**: Combined size of all cache files
+- **Total entries**: Number of dialogue entries across all caches
+- **Oldest cache**: Age of the oldest cache file
+
+### Manual Cache Clear
+One-click button to clear all cache files:
+- Clears dialogue cache files
+- Clears system cache files
+- Clears sync hash files
+- Displays success/error status
+
+## Compatibility
+
+### Compatible Connector Types
+- **CORE_CONNECTOR (Main)**: Primary conversation connector ✅
+- **CORE_CONNECTOR_DIRECTOR**: Director mode ✅
+
+### Incompatible Connector Types
+These use `fast_request()` which is not supported:
+- CORE_CONNECTOR_PLAYER ❌
+- CORE_CONNECTOR_SUMMARY ❌
+- CORE_CONNECTOR_MEDIUMTERM ❌
+- CORE_CONNECTOR_PROFILES ❌
+
+The cached connector is automatically hidden from these selections in the UI.
+
+## Limitations
+
+### Web Search Not Supported
+The "Skyrim search:" feature is **not currently supported** by the cached connector. If you need web search functionality, use the standard `openrouterjson` connector instead.
+
+### Streaming Only
+This connector is streaming-only. The `fast_request()` method is not implemented, which is why it cannot be used for summary/profile connectors.
+
+## File Locations
+
+### Connector Files
 ```
-**Result**: Pure dialogue with no metadata
-
-### Action-Focused Configuration
-```php
-"response_format" => "json",
-"include_actions_list" => true,
-"include_mood_requirement" => false,
-"include_target_requirement" => true,  // Required with actions
-"include_listener_requirement" => false,
-```
-**Result**: Character performs actions without mood/listener requirements
-
-### Full Featured (Default)
-```php
-"response_format" => "json",
-"include_actions_list" => true,
-"include_mood_requirement" => true,
-"include_target_requirement" => true,
-"include_listener_requirement" => true,
-```
-**Result**: All features enabled
-
-## Caching Behavior
-
-### System Prompt Caching
-- Stored in: `temp/system_cache_json_{character}.tmp`
-- Cache duration: 1 hour
-- **What's cached**: Character personality, backstory, game rules, action definitions
-- **What's excluded**: Environmental context, equipment, combat vitals (dynamic data)
-
-### Dialogue History Caching
-- Stored in: `temp/combined_dialogue_cache_json_{character}.tmp`
-- Max entries: Configured by `max_dialogue_cache_context_size`
-- Auto-clears: After 1 hour or when max length exceeded
-- **Fresh messages**: Last N messages (configured by `dialogue_cache_uncached_count`) remain uncached
-- **Deduplication**: Removes neighboring duplicates and duplicate memories
-
-### Cache Performance
-Monitor caching efficiency in `connector/_cached_perf.log`:
-```
-[2025-01-15 10:30:45] CACHE_PERF Lydia: Read:5240 Create:0 New:120 Total:5360 Efficiency:97.8%
-```
-- **Read**: Tokens loaded from cache (cheap)
-- **Create**: Tokens written to cache (one-time cost)
-- **New**: Fresh tokens (not cached)
-- **Efficiency**: Percentage of input from cache
-
-## Integration with CHIM 2.0
-
-### Connector Assignment Flow
-```
-Global Settings → LLM Connectors → Profiles → NPC
+connector/openrouterjsoncached.php        - Main connector class
+connector/openrouterjsoncached_helpers.php - Helper functions
 ```
 
-1. **Define Connector**: Add to globals with configuration
-2. **Create Profile**: Assign connector to profile
-3. **Assign to NPC**: Link profile to specific NPCs
-
-Settings cascade from NPC → Profile → Connector → Global, with NPC settings taking highest priority.
-
-### Example Profile Setup
-```php
-$GLOBALS["PROFILES"]["cached_claude"] = [
-    "connector" => "openrouterjsoncached",
-    "provider_caching" => "Anthropic",
-    "response_format" => "json",
-    // Profile-specific overrides
-];
+### Cache Files (auto-generated)
 ```
+temp/system_cache_{format}_{npc}.tmp           - Cached system prompts
+temp/combined_dialogue_cache_{format}_{npc}.tmp - Cached dialogue history
+temp/sync_hash_{format}_{npc}.tmp              - Profile/memory hashes (sync mode)
+```
+
+### Log Files
+```
+log/cache.log         - General caching logs
+log/_cached_perf.log  - Cache performance metrics
+```
+
+## Performance Tips
+
+### Optimal Cache Settings
+- **Max Cache Context Size**: 93-150 for most uses (93 ≈ 1 hour gameplay)
+- **Uncached Dialogue Count**: 4-6 for balance between freshness and efficiency
+
+### Provider Selection
+| Provider | Best For | Cache Hit Rate |
+|----------|----------|----------------|
+| Anthropic | Claude models, best overall | Highest |
+| OpenAI | GPT-4/5, reasoning models | Good |
+| Gemini | Very long conversations | Good |
+
+### Format Selection
+- Use **JSON** for complex interactions, debugging, full features
+- Use **Simple** for faster responses, lower costs, simpler models
+
+### Content Controls
+- Disable unused features to reduce prompt size
+- Actions list is the largest component (~500-1000 tokens)
+- Disabling actions significantly reduces prompt tokens
 
 ## Troubleshooting
 
 ### Cache Not Working
 1. Check `temp/` directory exists and is writable
-2. Verify `provider_caching` matches your model provider
-3. Check logs in `log/cache.log` for errors
+2. Verify provider_caching matches your model provider
+3. Check `log/cache.log` for errors
 4. Ensure API key has cache access (Anthropic tier requirements)
 
 ### Low Cache Efficiency
-- Increase `max_dialogue_cache_context_size`
-- Decrease `dialogue_cache_uncached_count` (but keep >2 for freshness)
-- Check if dynamic content is being re-cached (should be extracted)
+- Increase max_dialogue_cache_context_size
+- Decrease dialogue_cache_uncached_count (keep >2 for freshness)
+- Check if dynamic content is being re-cached
 
 ### Simple Format Not Parsing
-- Ensure LLM is using parentheses: `(value)(value)`
+- Ensure LLM is using parentheses format: `(value)(value)`
 - Check `log/cache.log` for parsing errors
 - Try enabling fewer components initially
-- Verify `include_*` settings match expected format
+- Consider using JSON format for more reliable parsing
 
 ### Actions Not Triggering
-- Ensure `include_actions_list` is `true`
-- Verify `include_target_requirement` is `true` (required for actions)
-- Check `processActions()` logs in `log/cache.log`
-- Confirm action name is in valid actions list
+- Ensure include_actions_list is enabled
+- Verify include_target_requirement is enabled (required for actions)
+- Check action name is in valid actions list
+- Review `log/cache.log` for processActions() errors
 
-## Performance Tips
+### Cache Not Clearing on Profile Updates
+- Ensure cache_invalidation_mode is set to "Sync with updates"
+- Check that NPC has extended_data with dynamic profile fields
+- Verify temp/ directory is writable
 
-1. **Optimal Cache Settings**:
-   - `max_dialogue_cache_context_size`: 150-250 for most uses
-   - `dialogue_cache_uncached_count`: 3-5 for balance
+## Version History
 
-2. **Format Selection**:
-   - Use JSON for complex interactions, debugging
-   - Use Simple for faster responses, lower costs
-
-3. **Content Controls**:
-   - Disable unused features to reduce prompt size
-   - Actions list is largest component (~500-1000 tokens)
-
-4. **Provider Selection**:
-   - Anthropic: Best cache hit rates, longest TTL
-   - OpenAI: Use for o1/o3 reasoning models only
-   - Gemini: Best for very long conversations
-
-## Files Created
-
-- `connector/openrouterjsoncached.php` - Main connector class
-- `connector/openrouterjsoncached_helpers.php` - Helper functions
-- `log/cache.log` - General caching logs
-- `log/_cached_perf.log` - Cache performance metrics
-- `temp/system_cache_json_*.tmp` - Cached system prompts
-- `temp/combined_dialogue_cache_json_*.tmp` - Cached dialogue history
+| Version | Date | CHIM | Changes |
+|---------|------|------|---------|
+| v2.0.1 | 2026-01-29 | 2.3.3 | sync_updates invalidation, cache stats UI, cache clear button |
+| v2.0.0 | 2026-01-28 | 2.3.3 | Port to CHIM 2.3.3, memory mode toggle, close() signature fix |
+| v1.4 | 2026-01-21 | 2.0.5 | Core/Additionals split, bug fixes |
+| v1.0-v1.3 | 2026-01-16 | 2.0.3 | Initial implementation |
 
 ## Credits
 
 Based on:
 - Original CHIM Anthropic cache connector
-- OpenRouter JSON connector (CHIM 2.0)
-- Enhanced with additional features and multi-provider support
+- OpenRouter JSON connector (CHIM 2.3.3)
+- Enhanced with caching, response formats, and management tools
+
+## Support
+
+For issues or questions:
+- GitHub: https://github.com/Unknwn-Prson/HerikaServer_Unknwn_20260116
+- CHIM Discord community
