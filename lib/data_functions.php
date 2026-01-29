@@ -328,7 +328,7 @@ function DataPosibleLocationsToGo()
 {
     global $db;
     $lastDialogFull = array();
-    $results = $db->fetchAll("select  a.data  as data  FROM  eventlog a 
+    $results = $db->fetchAll("select  a.data  as data  FROM  eventlog a
     WHERE type in ('infoloc')  order by gamets desc,ts desc LIMIT 50 OFFSET 0");
     $lastData = "";
     $retData = [];
@@ -345,9 +345,34 @@ function DataPosibleLocationsToGo()
         break;
     }
 
+    // Apply LOCATION_BLACKLIST filtering if configured
+    if (isset($GLOBALS["LOCATION_BLACKLIST"]) && !empty($GLOBALS["LOCATION_BLACKLIST"])) {
+        // Handle both string (comma-separated) and array formats defensively
+        if (is_string($GLOBALS["LOCATION_BLACKLIST"])) {
+            $blacklistedLocations = array_map('trim', explode(',', strtolower($GLOBALS["LOCATION_BLACKLIST"])));
+        } elseif (is_array($GLOBALS["LOCATION_BLACKLIST"])) {
+            $blacklistedLocations = array_map(function($item) {
+                return strtolower(trim($item));
+            }, $GLOBALS["LOCATION_BLACKLIST"]);
+        } else {
+            $blacklistedLocations = [];
+        }
+
+        // Filter out blacklisted locations
+        $retData = array_filter($retData, function($location) use ($blacklistedLocations) {
+            $locationLower = strtolower(trim($location));
+            foreach ($blacklistedLocations as $blacklisted) {
+                if (!empty($blacklisted) && strpos($locationLower, $blacklisted) !== false) {
+                    return false;
+                }
+            }
+            return true;
+        });
+    }
+
     //print_r($matches);
-    // ? this part with 'Herika can see this beings in range:' seems outdated 
-    /* $results = $db->fetchAll("select  a.data  as data  FROM  eventlog a 
+    // ? this part with 'Herika can see this beings in range:' seems outdated
+    /* $results = $db->fetchAll("select  a.data  as data  FROM  eventlog a
     WHERE type in ('infonpc')  order by gamets desc,ts desc LIMIT 50 OFFSET 0");
     $lastData = "";
     $matches = [];
@@ -373,7 +398,7 @@ function DataPosibleLocationsToGo()
             //$retData[$k]=$v;
             $retData[$k]=trim($retData[$k]);
         }
-        
+
     }     */
     //return ["Goldenglow Estate","Faldar's Tooth","Goldenglow Estate Sewer","Pit Wolf(dead)","Pit Wolf(dead)","Herika"];
     //error_log("DataPosibleLocationsToGo: ".print_r($retData,true));
