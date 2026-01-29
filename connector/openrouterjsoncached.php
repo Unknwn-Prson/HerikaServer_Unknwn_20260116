@@ -4,12 +4,12 @@ $enginePath = dirname((__FILE__)) . DIRECTORY_SEPARATOR."..".DIRECTORY_SEPARATOR
 require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_functions.php");
 
 // Cached version of openrouterjson connector with Anthropic/OpenAI/Gemini cache support
-// Based on CHIM 2.2 architecture with additional caching and response format features
+// Based on CHIM 2.2/2.3.3 architecture with additional caching and response format features
 
 class openrouterjsoncached
 {
     // Version tracking - update after making changes
-    const VERSION = 'OpenRouter Cache Connector v2.0 for CHIM 2.2 | 2026/01/28';
+    const VERSION = 'OpenRouter Cache Connector v2.0.1 for CHIM 2.3.3 | 2026/01/29';
     public $primary_handler;
     public $name;
 
@@ -1398,13 +1398,14 @@ class openrouterjsoncached
     // ================================================================================
 
     // Method to close the data processing operation
-    public function close() {
+    public function close($callName = '') {
         if ($this->primary_handler) {
             @fclose($this->primary_handler);
             $this->primary_handler = null;
         }
 
         $herikaName = isset($GLOBALS["HERIKA_NAME"]) ? $GLOBALS["HERIKA_NAME"] : 'default_herika';
+        // $callName parameter available for logging purposes (matching CHIM 2.3.3 signature)
 
         try {
             $proc = isset($this->_buffer) ? $this->_buffer : '<empty>';

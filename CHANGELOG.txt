@@ -1,3 +1,19 @@
+CHIM Cached Connector v2.0.1 - Release Notes
+============================================
+Release Date: 2026-01-29
+Compatible with: CHIM 2.2, CHIM 2.3.3
+
+CHANGES IN v2.0.1
+-----------------
+- Updated for CHIM 2.3.3 compatibility
+- Added Groq connector support in llm_connector.class.php
+- Updated close() method signature to match CHIM 2.3.3
+- Improved getConnector() with validation and remove_action_prompt support
+- Alphabetical sorting in readAll() and getAllFk()
+- Updated default model to google/gemini-2.5-flash
+
+============================================================
+
 CHIM Cached Connector v2.0 - Release Notes
 ==========================================
 Release Date: 2026-01-28
