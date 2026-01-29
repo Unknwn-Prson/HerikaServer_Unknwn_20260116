@@ -964,6 +964,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST["create"])) {
     $payload['json_schema'] = 1;
     $payload['service'] = 'openrouter';
 
+    // Handle metadata if present (from form fields like metadata[key])
+    if (isset($payload["metadata"]) && is_array($payload["metadata"])) {
+        $payload["metadata"] = json_encode($payload["metadata"]);
+    }
+
     $newId = $llm->create($payload);
     if (!$newId) {
         $last = $GLOBALS["db"]->fetchOne("SELECT id FROM core_llm_connector ORDER BY id DESC LIMIT 1");
@@ -1080,6 +1085,32 @@ if (isset($_GET["create_blank"])) {
 // Handle Save (update without leaving current connector)
 if ($_SERVER["REQUEST_METHOD"] === "POST" && (isset($_POST["save"]) || isset($_POST["update"])) ) {
     $id = $_POST["id"] ?? '';
+
+    // Prepare metadata - merge form array fields with existing metadata
+    $metadata = [];
+    $existing = $llm->getById($id);
+    if ($existing && isset($existing["metadata"]) && !empty($existing["metadata"])) {
+        $metadata = is_string($existing["metadata"]) ? json_decode($existing["metadata"], true) : $existing["metadata"];
+        if (!is_array($metadata)) $metadata = [];
+    }
+
+    // Merge in new metadata from form (handles metadata[key] form fields)
+    if (isset($_POST["metadata"]) && is_array($_POST["metadata"])) {
+        foreach ($_POST["metadata"] as $key => $value) {
+            $metadata[$key] = $value;
+        }
+    }
+
+    // Handle remove_action_prompt checkbox (upstream pattern)
+    if (isset($_POST["remove_action_prompt"])) {
+        $metadata["remove_action_prompt"] = ($_POST["remove_action_prompt"] === "1" || $_POST["remove_action_prompt"] === 1);
+    } else {
+        unset($metadata["remove_action_prompt"]);
+    }
+
+    // JSON encode metadata before saving
+    $_POST["metadata"] = json_encode($metadata);
+
     $llm->update($id, $_POST);
     $redir = 'llm_connectors.php' . ($id !== '' ? ('?edit=' . urlencode($id)) : '');
     if (isset($_POST['partial']) && $_POST['partial'] === 'editor') {
