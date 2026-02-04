@@ -1,3 +1,70 @@
+CHIM Cached Connector v1.5.0 - Release Notes
+=============================================
+Release Date: 2026-02-04
+Compatible with: CHIM 2.3.3
+
+CHANGES IN v1.5.0
+-----------------
+
+1. RESTRUCTURED FOR MINIMAL UPSTREAM OVERWRITES
+   - dialogue_prompt.php override moved to ext/cached_connector/ (no upstream overwrite)
+   - Reasoning token stripping moved to standalone lib/reasoning_helpers.php
+   - Only 2 upstream files require overwriting (down from 3 in v1.4):
+     * lib/data_functions.php (handlesSentenceSplitting + LOCATION_BLACKLIST fix)
+     * lib/chat_helper_functions.php (PRESERVE_ASTERISKS mode)
+
+2. NEW FEATURES
+   - Disable Refusal Filter setting (defaults ON)
+     * Prevents checkOAIComplains() false positives from killing valid dialogue
+     * Root cause of Gemini/Palmyra response cutoffs (words like "sorry", "can't",
+       "assist" in normal RPG dialogue trigger the filter)
+     * Uses existing OPENAI_FILTER_DISABLED mechanism
+   - Preserve Asterisk Content setting (defaults OFF)
+     * New 'none' mode in unmoodSentence() strips asterisk characters but keeps text
+     * Prevents loss of emphasis formatting (*really*) and narration cues
+
+3. BUG FIXES
+   - Fixed LOCATION_BLACKLIST fatal TypeError in upstream data_functions.php
+     * explode() received array [] instead of string "" as fallback
+     * Added isset() check for undefined global variable
+   - Ported reasoning token stripping functions (lost in v2.0 upgrade)
+     * stripReasoningTokens(), hasUnclosedReasoningMarker(), extractReasoningFreeContent()
+     * Prevents <think>/<thinking> tags from leaking into NPC dialogue
+
+4. ARCHITECTURE
+   - ext/cached_connector/dialogue_prompt.php: Uses CHIM's requireFilesRecursively()
+     to override $TEMPLATE_DIALOG without touching upstream file
+   - lib/reasoning_helpers.php: Standalone file loaded by connector with
+     require_once + file_exists() guard
+   - All modifications in upstream files marked with BEGIN/END CACHED CONNECTOR comments
+
+5. FILES IN PACKAGE
+
+   CORE FILES:
+   - connector/openrouterjsoncached.php (v1.5.0)
+   - connector/openrouterjsoncached_helpers.php
+   - lib/core/llm_connector.class.php
+   - ui/core/llm_connectors.php (v1.5.0)
+   - conf/conf_schema.json
+
+   NEW FILES (added to CHIM):
+   - lib/reasoning_helpers.php
+   - ext/cached_connector/dialogue_prompt.php
+
+   UPSTREAM OVERWRITES:
+   - lib/data_functions.php (2 modifications + 1 upstream bug fix)
+   - lib/chat_helper_functions.php (1 modification)
+
+   DOCUMENTATION:
+   - CHANGELOG.txt (this file)
+   - PACKAGE_CONTENTS.txt
+   - INSTALLATION_INSTRUCTIONS.txt
+   - CACHED_CONNECTOR_UPGRADE_AUDIT.md
+   - FOUND_ISSUES.md
+   - connector/OPENROUTERJSONCACHED_README.md
+
+============================================================
+
 CHIM Cached Connector v2.0.1 - Release Notes
 ============================================
 Release Date: 2026-01-29
@@ -11,6 +78,9 @@ CHANGES IN v2.0.1
 - Improved getConnector() with validation and remove_action_prompt support
 - Alphabetical sorting in readAll() and getAllFk()
 - Updated default model to google/gemini-2.5-flash
+
+NOTE: v2.0.1 dropped 3 ADDITIONALS files from v1.4, causing feature loss.
+See CACHED_CONNECTOR_UPGRADE_AUDIT.md for details. Fixed in v1.5.0.
 
 ============================================================
 
@@ -37,41 +107,15 @@ KEY CHANGES FROM v1.4
    - cache_invalidation_mode: 'time_based' or 'sync_updates' (experimental)
 
 3. INCOMPATIBLE CONNECTOR FILTERING
-   - Cached connector hidden from CORE_CONNECTOR types that use fast_request:
-     * CORE_CONNECTOR_PLAYER
-     * CORE_CONNECTOR_SUMMARY
-     * CORE_CONNECTOR_MEDIUMTERM
-     * CORE_CONNECTOR_PROFILES
-   - These require non-streaming fast_request which cached connector doesn't support
+   - Cached connector hidden from CORE_CONNECTOR types that use fast_request
 
 4. BUG FIXES
    - Null-safe handling for empty context arrays
    - function_exists check for stripReasoningTokens
 
-5. FILES CHANGED
-   - connector/openrouterjsoncached.php: Complete rewrite for CHIM 2.2
-   - connector/openrouterjsoncached_helpers.php: Unchanged (compatible)
-   - conf/conf_schema.json: Added memory_mode, cache_invalidation_mode
-   - lib/core/llm_connector.class.php: Added v2 setting defaults
-   - ui/core/llm_connectors.php: Added v2 settings UI
-   - ui/global_settings.php: Added cached connector filtering
-
-6. STREAMING-ONLY DESIGN
+5. STREAMING-ONLY DESIGN
    - fast_request() method removed entirely
    - All operations use streaming for better user experience
-   - Connector incompatible with CORE_CONNECTOR types that require fast_request
-
-UPGRADE NOTES
--------------
-- v2.0 requires CHIM 2.2 (not compatible with CHIM 2.0.x)
-- Existing connector configurations preserved (same driver name)
-- New settings default to recommended values if not configured
-- fast_request-dependent connector assignments need reassignment
-
-KNOWN LIMITATIONS
------------------
-- Web search feature: Properties exist but logic not yet ported
-- sync_updates cache mode: Property exists but not fully implemented
 
 ============================================================
 
@@ -82,114 +126,19 @@ Compatible with: CHIM 2.0.3
 
 OVERVIEW
 --------
-v1.4 is a significant release that:
-1. Restructures the package into CORE and ADDITIONALS for easier maintenance
-2. Removes the verbose connector (never worked properly)
-3. Adds conditional UI toggle for Minimize Quality Instructions
+v1.4 restructured the package into CORE and ADDITIONALS.
 
 KEY CHANGES
 -----------
-
-1. CORE/ADDITIONALS SPLIT
-
-   Package now clearly separated into:
-
-   CORE FILES (5 files - minimum required):
-   - conf/conf_schema.json
-   - lib/core/llm_connector.class.php
-   - ui/core/llm_connectors.php
-   - connector/openrouterjsoncached.php
-   - connector/openrouterjsoncached_helpers.php
-
-   ADDITIONALS FILES (3 files - enhanced features):
-   - prompts/dialogue_prompt.php
-   - lib/data_functions.php
-   - lib/chat_helper_functions.php
-
-2. REMOVED VERBOSE CONNECTOR
-
-   The verbose connector has been completely removed:
-   - Deleted: connector/openrouterjsoncached_verbose.php
-   - Removed from UI dropdown
-   - Removed from conf_schema.json
-   - Removed from llm_connector.class.php
-
-   Reason: It never worked properly and just added maintenance overhead.
-
-3. CONDITIONAL UI TOGGLE
-
-   The "Minimize Quality Instructions" toggle is now conditionally displayed:
-   - Shows only when prompts/dialogue_prompt.php contains the marker
-     "CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT"
-   - Hidden if vanilla dialogue_prompt.php is present
-   - Prevents confusing UI options that do nothing
-
-INSTALLATION SCENARIOS
-----------------------
-
-Scenario 1: Full Installation (Recommended)
-- Install all CORE + ADDITIONALS files
-- All features available
-
-Scenario 2: Core Only (Quick Recovery After HerikaServer Update)
-- Install only CORE files (5 files)
-- Connector works with main features
-- "Minimize Quality" toggle hidden
-- Simple format sentences batch slightly
-- Asterisk stripping bug present
-
-Scenario 3: Staged Update
-1. Install CORE files to restore connector
-2. Install ADDITIONALS when time permits
-3. UI automatically shows features as they're installed
-
-TECHNICAL DETAILS
------------------
-
-Removed Files:
-- connector/openrouterjsoncached_verbose.php (deleted)
-
-Modified Files:
-- ui/core/llm_connectors.php
-  * Removed verbose connector from dropdown
-  * Removed verbose logging UI option
-  * Removed verbose JavaScript logic
-  * Added conditional check for minimize_quality_prompt toggle
-  * Updated version to v1.4
-
-- conf/conf_schema.json
-  * Removed openrouterjsoncached_verbose from CONNECTORS list
-  * Removed entire openrouterjsoncached_verbose section
-  * Removed verbose_logging field from openrouterjsoncached
-
-- lib/core/llm_connector.class.php
-  * Removed openrouterjsoncached_verbose else-if block
-
-- connector/openrouterjsoncached.php
-  * Updated VERSION to v1.4
-
-- prompts/dialogue_prompt.php
-  * Added marker comment (from v1.3.5): "CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT"
-
-UPGRADE NOTES
--------------
-
-Users upgrading from v1.3.x:
-- Verbose connector is gone - if you were using it, switch to openrouterjsoncached
-- All previous functionality preserved in the main connector
-- Package is now split but can be installed together as before
+- CORE/ADDITIONALS split for easier maintenance
+- Removed verbose connector (never worked properly)
+- Added conditional UI toggle for Minimize Quality Instructions
 
 PREVIOUS RELEASES
 -----------------
 
-v1.3.5 (2026-01-21 - internal):
-- Core/Additionals split structure
-- Conditional minimize_quality_prompt toggle
-- Removed events-memories.php from package
-
 v1.3.4 (2026-01-16):
 - Fixed asterisk/dash stripping in sentence splitting
-- Preserved action markers like `* rises from chair *`
 
 v1.3.3 (2025-11-16):
 - Removed MINIMUM_SENTENCE_SIZE bottleneck for simple format
@@ -206,13 +155,3 @@ v1.2.x:
 - Advanced caching support
 - Thinking/Reasoning support
 - Flexible response formats
-
-COMPATIBILITY
--------------
-
-Works with CHIM 2.0.3
-Backward compatible with all v1.3.x configurations
-No breaking changes (unless you were using verbose connector)
-
-For complete feature list: PACKAGE_CONTENTS.txt
-For development history: CLAUDE_changelog.md

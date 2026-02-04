@@ -1,40 +1,44 @@
-CHIM Cached Connector v2.0.1 - Package Contents
+CHIM Cached Connector v1.5.0 - Package Contents
 ================================================
 
-This package is split into CORE and ADDITIONALS for easier maintenance
-when HerikaServer updates. The CORE files are the minimum required to
-run the cached connector. ADDITIONALS provide enhanced features.
-
-NOTE: v2.0.1 is compatible with CHIM 2.2 and CHIM 2.3.3. For CHIM 2.0.x, use v1.4.
+Compatible with: CHIM 2.3.3
+Release Date: 2026-02-04
 
 PACKAGE STRUCTURE
 -----------------
 
 CORE FILES (Required - Minimum for connector to function):
-- conf/conf_schema.json          - Connector registration
-- lib/core/llm_connector.class.php - Connector instantiation
-- ui/core/llm_connectors.php     - Configuration UI
-- connector/openrouterjsoncached.php - Main connector
+- conf/conf_schema.json              - Connector registration
+- lib/core/llm_connector.class.php   - Connector instantiation
+- ui/core/llm_connectors.php         - Configuration UI (v1.5.0)
+- connector/openrouterjsoncached.php - Main connector (v1.5.0)
 - connector/openrouterjsoncached_helpers.php - Helper functions
 
-ADDITIONALS FILES (Optional - Enhanced features):
-- prompts/dialogue_prompt.php    - Minimize Quality Instructions feature
-- lib/data_functions.php         - Immediate sentence streaming (simple format)
-- lib/chat_helper_functions.php  - Asterisk/dash preservation fix
+NEW FILES (Added to CHIM - do not overwrite anything):
+- lib/reasoning_helpers.php              - Reasoning/CoT token stripping
+- ext/cached_connector/dialogue_prompt.php - Minimize Quality Instructions override
+
+UPSTREAM OVERWRITES (Replace upstream files - marked with BEGIN/END comments):
+- lib/data_functions.php         - handlesSentenceSplitting + LOCATION_BLACKLIST fix
+- lib/chat_helper_functions.php  - PRESERVE_ASTERISKS mode in unmoodSentence()
 
 DOCUMENTATION:
 - CHANGELOG.txt
-- CLAUDE_changelog.md
 - PACKAGE_CONTENTS.txt (this file)
+- INSTALLATION_INSTRUCTIONS.txt
+- CACHED_CONNECTOR_UPGRADE_AUDIT.md
+- FOUND_ISSUES.md
 - connector/OPENROUTERJSONCACHED_README.md
 
 DIRECTORY STRUCTURE
 -------------------
 
-chim_v1.4_package/
+openrouterjsoncached_v1.5.0_CHIM2.3.3/
 ├── CHANGELOG.txt
 ├── PACKAGE_CONTENTS.txt (this file)
-├── CLAUDE_changelog.md
+├── INSTALLATION_INSTRUCTIONS.txt
+├── CACHED_CONNECTOR_UPGRADE_AUDIT.md
+├── FOUND_ISSUES.md
 │
 ├── [CORE]
 ├── conf/
@@ -50,128 +54,70 @@ chim_v1.4_package/
 │   └── core/
 │       └── llm_connectors.php
 │
-├── [ADDITIONALS]
-├── prompts/
-│   └── dialogue_prompt.php
-└── lib/
-    ├── chat_helper_functions.php
-    └── data_functions.php
+├── [NEW FILES]
+├── lib/
+│   └── reasoning_helpers.php
+├── ext/
+│   └── cached_connector/
+│       └── dialogue_prompt.php
+│
+└── [UPSTREAM OVERWRITES]
+    └── lib/
+        ├── data_functions.php
+        └── chat_helper_functions.php
 
-CORE vs ADDITIONALS EXPLAINED
------------------------------
+WHAT EACH CATEGORY MEANS
+-------------------------
 
-CORE FILES enable:
-- Connector appears in LLM connector dropdown
-- Provider caching (Anthropic, OpenAI, Gemini)
-- Response format selection (JSON / Simple)
-- Thinking/Reasoning toggle
-- Custom system/last instructions
-- All UI settings save and load correctly
+CORE FILES: The connector itself plus its registration in CHIM's systems.
+These are the minimum required files. Without them, the connector does not
+appear in the UI and cannot be used.
 
-ADDITIONALS enable:
-- Minimize Quality Instructions toggle (hidden if not installed)
-- Immediate sentence streaming for simple format
-- Asterisk/dash preservation in sentence splitting (bug fix)
+NEW FILES: Files that are added alongside existing CHIM files. They do NOT
+replace or modify any upstream file. Safe to install without risk.
 
-CONDITIONAL UI BEHAVIOR
------------------------
-
-The "Minimize Quality Instructions" toggle in the UI is CONDITIONALLY
-displayed based on whether the additionals are installed:
-
-- If prompts/dialogue_prompt.php contains the marker comment
-  "CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT", the toggle shows
-- If vanilla dialogue_prompt.php is present, the toggle is hidden
-- This prevents UI options that do nothing from confusing users
+UPSTREAM OVERWRITES: Modified versions of CHIM 2.3.3 files. These contain
+small, clearly marked modifications. Installing them replaces the upstream
+version. Each modification is bracketed with:
+  // --- BEGIN CACHED CONNECTOR MODIFICATION ---
+  // --- END CACHED CONNECTOR MODIFICATION ---
 
 INSTALLATION SCENARIOS
 ----------------------
 
 Scenario 1: Full Installation (Recommended)
-- Install all CORE + ADDITIONALS files
+- Install ALL files (Core + New + Overwrites)
 - All features available
 
-Scenario 2: Core Only (Quick HerikaServer Update Recovery)
-- Install only CORE files (5 files)
-- Connector works with all main features
-- "Minimize Quality" toggle hidden (feature not available)
-- Simple format sentences batch slightly (75-char minimum)
-- Asterisk stripping bug present (cosmetic issue)
+Scenario 2: Core + New Files Only (Safe, Partial Features)
+- Install Core files + New files (no upstream overwrites)
+- Connector works with main features
+- Missing: immediate simple-format streaming, PRESERVE_ASTERISKS,
+  LOCATION_BLACKLIST fix
 
-Scenario 3: Staged Update After HerikaServer Update
-1. First: Install CORE files to restore connector functionality
-2. Later: Install ADDITIONALS when time permits
-3. UI automatically shows/hides features based on what's installed
+Scenario 3: Quick Restore After CHIM Update
+1. Install Core files to restore connector
+2. Install New files (safe, no conflicts)
+3. Install Overwrites after reviewing CHIM changes
 
-FILE DESCRIPTIONS
------------------
+FEATURE-TO-FILE MAPPING
+------------------------
 
-CORE Files:
+| Feature                       | File(s)                               | Category      |
+|-------------------------------|---------------------------------------|---------------|
+| Connector itself              | connector/openrouterjsoncached*.php   | Core          |
+| UI settings                   | ui/core/llm_connectors.php            | Core          |
+| Connector registration        | lib/core/llm_connector.class.php      | Core          |
+| Config schema                 | conf/conf_schema.json                 | Core          |
+| Reasoning token stripping     | lib/reasoning_helpers.php             | New           |
+| Minimize Quality Instructions | ext/cached_connector/dialogue_prompt  | New           |
+| Immediate simple streaming    | lib/data_functions.php                | Overwrite     |
+| LOCATION_BLACKLIST fix        | lib/data_functions.php                | Overwrite     |
+| Preserve Asterisk Content     | lib/chat_helper_functions.php         | Overwrite     |
+| Disable Refusal Filter        | connector/openrouterjsoncached.php    | Core (built-in)|
 
-- conf/conf_schema.json
-  Registers the cached connector options in CHIM's configuration system
-
-- lib/core/llm_connector.class.php
-  Adds connector instantiation (else-if branch for cached connector)
-
-- ui/core/llm_connectors.php (v1.4)
-  Configuration UI with conditional "Minimize Quality" toggle
-  Shows toggle only when additionals are installed
-
-- connector/openrouterjsoncached.php (v1.4)
-  Main connector: API communication, caching, thinking, streaming
-
-- connector/openrouterjsoncached_helpers.php
-  Format building, simple format parsing, sentence splitting
-
-ADDITIONALS Files:
-
-- prompts/dialogue_prompt.php
-  Contains "CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT" marker
-  Enables shorter prompts for advanced models (token savings)
-
-- lib/data_functions.php
-  Bypasses 75-char MINIMUM_SENTENCE_SIZE for simple format
-  Enables immediate sentence streaming
-
-- lib/chat_helper_functions.php
-  Fixed regex preserves asterisks, dashes, hashes, at-signs
-  Benefits ALL connectors, not just cached
-
-CHANGES FROM v1.3.5
+VERSION INFORMATION
 -------------------
-
-- REMOVED: Verbose connector entirely (openrouterjsoncached_verbose.php)
-- REMOVED: Verbose connector from UI dropdown
-- REMOVED: Verbose connector from conf_schema.json
-- REMOVED: Verbose connector from llm_connector.class.php
-- Updated version to v1.4
-
-VERSION COMPATIBILITY
----------------------
-
-v1.4 files:
-- connector/openrouterjsoncached.php
-- ui/core/llm_connectors.php
-- prompts/dialogue_prompt.php (marker added in v1.3.5)
-
-Unchanged from v1.3.5:
-- lib/chat_helper_functions.php (asterisk fix)
-- lib/data_functions.php (streaming logic)
-- lib/core/llm_connector.class.php (minus verbose)
-- conf/conf_schema.json (minus verbose)
-- connector/openrouterjsoncached_helpers.php
-
-QUICK REFERENCE
----------------
-
-After HerikaServer update, to restore connector:
-1. Copy CORE files (5 files)
-2. Test - connector should work
-3. Copy ADDITIONALS files (3 files) when ready
-4. "Minimize Quality" toggle appears automatically
-
-Package Date: 2026-01-29
-CHIM Version: 2.2, 2.3.3
-Connector Version: 2.0.1
-Key Feature: Complete rewrite for CHIM 2.2/2.3.3, streaming-only design, memory modes
+Package: CHIM Cached Connector v1.5.0
+CHIM Compatibility: 2.3.3
+Connector Version: 1.5.0
