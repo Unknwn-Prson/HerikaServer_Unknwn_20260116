@@ -140,6 +140,10 @@ class openrouterjsoncached
 
         require_once(__DIR__."/__jpd.php");
         require_once(__DIR__."/openrouterjsoncached_helpers.php");
+        // Load reasoning token stripping functions (stripReasoningTokens, hasUnclosedReasoningMarker, etc.)
+        if (file_exists(__DIR__."/../lib/reasoning_helpers.php")) {
+            require_once(__DIR__."/../lib/reasoning_helpers.php");
+        }
 
         logMessage("[{$this->name}] OpenRouter Cached Connector v" . self::VERSION . " initialized");
     }
@@ -431,6 +435,26 @@ class openrouterjsoncached
         $minimizeQualityPrompt = isset($GLOBALS["CONNECTOR"][$this->name]["minimize_quality_prompt"])
             ? (bool)$GLOBALS["CONNECTOR"][$this->name]["minimize_quality_prompt"]
             : true;
+
+        // --- BEGIN CACHED CONNECTOR SETTINGS ---
+        // Refusal filter: disable checkOAIComplains for this connector (defaults to ON = disabled)
+        // Uses the existing OPENAI_FILTER_DISABLED mechanism in chat_helper_functions.php
+        $disableRefusalFilter = isset($GLOBALS["CONNECTOR"][$this->name]["disable_refusal_filter"])
+            ? (bool)$GLOBALS["CONNECTOR"][$this->name]["disable_refusal_filter"]
+            : true; // Default: disabled for cached connector (non-OpenAI models)
+        if ($disableRefusalFilter) {
+            $GLOBALS["OPENAI_FILTER_DISABLED"] = true;
+        }
+
+        // Asterisk preservation: preserve text between *...* instead of stripping
+        // Uses the PRESERVE_ASTERISKS mechanism in chat_helper_functions.php unmoodSentence()
+        $preserveAsterisks = isset($GLOBALS["CONNECTOR"][$this->name]["preserve_asterisks"])
+            ? (bool)$GLOBALS["CONNECTOR"][$this->name]["preserve_asterisks"]
+            : false; // Default: off (standard TTS behavior)
+        if ($preserveAsterisks) {
+            $GLOBALS["PRESERVE_ASTERISKS"] = true;
+        }
+        // --- END CACHED CONNECTOR SETTINGS ---
 
         // Memory mode configuration (NEW in v2)
         $this->_memoryMode = isset($GLOBALS["CONNECTOR"][$this->name]["memory_mode"])

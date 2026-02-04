@@ -530,7 +530,14 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                         </label>
                     </div>
 
-                    <?php if (@strpos(file_get_contents(__DIR__.'/../../prompts/dialogue_prompt.php'), 'CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT') !== false): ?>
+                    <?php
+                    // Check for MINIMIZE_QUALITY_PROMPT feature marker in either location:
+                    // - Original: prompts/dialogue_prompt.php (upstream overwrite)
+                    // - New: ext/cached_connector/dialogue_prompt.php (ext override)
+                    $hasMinimizeFeature = @strpos(file_get_contents(__DIR__.'/../../prompts/dialogue_prompt.php'), 'CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT') !== false
+                        || @strpos(@file_get_contents(__DIR__.'/../../ext/cached_connector/dialogue_prompt.php'), 'CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT') !== false;
+                    ?>
+                    <?php if ($hasMinimizeFeature): ?>
                     <div style="margin-top:12px;">
                         <label class="label-with-toggle"><span class='tip-label' data-tip='Recommended ON for advanced models (Claude 4.5, GPT-4, Gemini 2.0). Uses minimal quality instructions. Turn OFF for older/smaller models that benefit from explicit guidance.'>Minimize Quality Instructions (Recommended)</span>
                             <input type="hidden" name="metadata[minimize_quality_prompt]" value="0">
@@ -539,6 +546,22 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                         </label>
                     </div>
                     <?php endif; ?>
+
+                    <div style="margin-top:12px;">
+                        <label class="label-with-toggle"><span class='tip-label' data-tip='Disable the refusal language filter (checkOAIComplains). Recommended ON for non-OpenAI models (Claude, Gemini, etc.) that use words like &quot;sorry&quot; and &quot;can&apos;t&quot; in normal dialogue. When OFF, sentences with too many refusal-like words will be suppressed.'>Disable Refusal Filter (Recommended)</span>
+                            <input type="hidden" name="metadata[disable_refusal_filter]" value="0">
+                            <input type="checkbox" name="metadata[disable_refusal_filter]" value="1" <?= (!isset($metadata['disable_refusal_filter']) || $metadata['disable_refusal_filter']) ? 'checked' : '' ?>>
+                            <span class="toggle-text">On</span>
+                        </label>
+                    </div>
+
+                    <div style="margin-top:12px;">
+                        <label class="label-with-toggle"><span class='tip-label' data-tip='Preserve text between asterisks (*like this*) instead of stripping it. Useful for roleplay formatting, emphasis, and narration. When OFF, text between asterisks is removed (default TTS behavior).'>Preserve Asterisk Content</span>
+                            <input type="hidden" name="metadata[preserve_asterisks]" value="0">
+                            <input type="checkbox" name="metadata[preserve_asterisks]" value="1" <?= (isset($metadata['preserve_asterisks']) && $metadata['preserve_asterisks']) ? 'checked' : '' ?>>
+                            <span class="toggle-text">On</span>
+                        </label>
+                    </div>
 
                     <div style="margin-top:12px;">
                         <label for='max_dialogue_cache_context_size'><span class='tip-label' data-tip='Maximum number of dialogue entries to cache in temp files. Higher = more context but larger cache files. Recommended: 93'>Max Dialogue Cache Context Size</span></label><br>
@@ -1698,7 +1721,11 @@ $effortLevel = $metadataArr["effort_level"] ?? '';
                     </label>
                 </div>
 
-                <?php if (@strpos(file_get_contents(__DIR__.'/../../prompts/dialogue_prompt.php'), 'CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT') !== false): ?>
+                <?php
+                $hasMinimizeFeatureEdit = @strpos(file_get_contents(__DIR__.'/../../prompts/dialogue_prompt.php'), 'CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT') !== false
+                    || @strpos(@file_get_contents(__DIR__.'/../../ext/cached_connector/dialogue_prompt.php'), 'CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT') !== false;
+                ?>
+                <?php if ($hasMinimizeFeatureEdit): ?>
                 <div style="margin-top:12px;">
                     <label class="label-with-toggle"><span class='tip-label' data-tip='Recommended ON for advanced models (Claude 4.5, GPT-4, Gemini 2.0). Uses minimal quality instructions. Turn OFF for older/smaller models that benefit from explicit guidance.'>Minimize Quality Instructions (Recommended)</span>
                         <input type="hidden" name="metadata[minimize_quality_prompt]" value="0">
@@ -1707,6 +1734,22 @@ $effortLevel = $metadataArr["effort_level"] ?? '';
                     </label>
                 </div>
                 <?php endif; ?>
+
+                <div style="margin-top:12px;">
+                    <label class="label-with-toggle"><span class='tip-label' data-tip='Disable the refusal language filter (checkOAIComplains). Recommended ON for non-OpenAI models (Claude, Gemini, etc.) that use words like &quot;sorry&quot; and &quot;can&apos;t&quot; in normal dialogue. When OFF, sentences with too many refusal-like words will be suppressed.'>Disable Refusal Filter (Recommended)</span>
+                        <input type="hidden" name="metadata[disable_refusal_filter]" value="0">
+                        <input type="checkbox" name="metadata[disable_refusal_filter]" value="1" <?= (!isset($metadata_main['disable_refusal_filter']) || $metadata_main['disable_refusal_filter']) ? 'checked' : '' ?>>
+                        <span class="toggle-text">On</span>
+                    </label>
+                </div>
+
+                <div style="margin-top:12px;">
+                    <label class="label-with-toggle"><span class='tip-label' data-tip='Preserve text between asterisks (*like this*) instead of stripping it. Useful for roleplay formatting, emphasis, and narration. When OFF, text between asterisks is removed (default TTS behavior).'>Preserve Asterisk Content</span>
+                        <input type="hidden" name="metadata[preserve_asterisks]" value="0">
+                        <input type="checkbox" name="metadata[preserve_asterisks]" value="1" <?= (isset($metadata_main['preserve_asterisks']) && $metadata_main['preserve_asterisks']) ? 'checked' : '' ?>>
+                        <span class="toggle-text">On</span>
+                    </label>
+                </div>
 
                 <div style="margin-top:12px;">
                     <label for='max_dialogue_cache_context_size_main'><span class='tip-label' data-tip='Maximum number of dialogue entries to cache in temp files. Higher = more context but larger cache files. Recommended: 93'>Max Dialogue Cache Context Size</span></label><br>
