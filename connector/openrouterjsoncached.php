@@ -9,7 +9,7 @@ require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_function
 class openrouterjsoncached
 {
     // Version tracking - update after making changes
-    const VERSION = 'OpenRouter Cache Connector v1.5.4 for CHIM 2.3.3 | 2026/02/06';
+    const VERSION = 'OpenRouter Cache Connector v1.5.5 for CHIM 2.3.3 | 2026/02/06';
     public $primary_handler;
     public $name;
 
@@ -1721,10 +1721,231 @@ class openrouterjsoncached
         $this->_forcedClose=true;
     }
 
-    // NOTE: fast_request() is NOT available in the cached connector.
-    // This connector is streaming-only and designed for main conversation.
-    // For non-streaming requests (CORE_CONNECTOR_MEDIUMTERM, CORE_CONNECTOR_SUMMARY, etc.),
-    // use the standard openrouterjson connector instead.
+    /**
+     * Non-streaming request method for compatibility with summary/profile connectors.
+     * This allows the cached connector to be used for CORE_CONNECTOR_MEDIUMTERM,
+     * CORE_CONNECTOR_SUMMARY, and other non-streaming use cases.
+     *
+     * @param array $contextData The context/messages to send
+     * @param array $customParms Custom parameters (MAX_TOKENS, model, temperature, etc.)
+     * @param string $callName Optional call name for logging
+     * @return string The LLM response text, or empty string on error
+     */
+    public function fast_request($contextData, $customParms, $callName = '')
+    {
+        // Initialize URL
+        $this->_url = isset($GLOBALS["CONNECTOR"][$this->name]["url"]) ? $GLOBALS["CONNECTOR"][$this->name]["url"] : '';
+        if (empty($this->_url)) {
+            logMessage("{$this->name} connector - missing url!");
+            return "";
+        }
+
+        // Initialize model
+        $this->_model = isset($GLOBALS["CONNECTOR"][$this->name]["model"]) ? $GLOBALS["CONNECTOR"][$this->name]["model"] : 'anthropic/claude-3-haiku-20240307';
+        if (isset($customParms["model"])) {
+            $this->_model = $customParms["model"];
+        }
+
+        // Detect model types
+        $this->_is_reasoning = $this->isReasoningModel($this->_model);
+        $this->_is_openai = $this->isOpenAIModel($this->_model);
+        $this->_is_grok = (stripos($this->_model, 'grok') !== false);
+
+        if (empty($callName)) {
+            $callName = $this->name;
+        } else {
+            $callName = $this->name . "/" . $callName;
+        }
+
+        // Get max tokens
+        $MAX_TOKENS = intval(isset($GLOBALS["CONNECTOR"][$this->name]["max_tokens"]) ? $GLOBALS["CONNECTOR"][$this->name]["max_tokens"] : 48);
+        if (isset($customParms["MAX_TOKENS"])) {
+            $MAX_TOKENS = intval($customParms["MAX_TOKENS"]);
+            unset($customParms["MAX_TOKENS"]);
+        }
+        if (isset($GLOBALS["FORCE_MAX_TOKENS"])) {
+            $MAX_TOKENS = intval($GLOBALS["FORCE_MAX_TOKENS"]);
+        }
+
+        // Get parameters with defaults
+        $temperature = floatval(isset($GLOBALS["CONNECTOR"][$this->name]["temperature"]) ? $GLOBALS["CONNECTOR"][$this->name]["temperature"] : 0.7);
+        $temperature = max(0.0, min(2.0, $temperature));
+
+        $presence_penalty = floatval(isset($GLOBALS["CONNECTOR"][$this->name]["presence_penalty"]) ? $GLOBALS["CONNECTOR"][$this->name]["presence_penalty"] : 0.0);
+        $presence_penalty = max(-2.0, min(2.0, $presence_penalty));
+
+        $frequency_penalty = floatval(isset($GLOBALS["CONNECTOR"][$this->name]["frequency_penalty"]) ? $GLOBALS["CONNECTOR"][$this->name]["frequency_penalty"] : 0.0);
+        $frequency_penalty = max(-2.0, min(2.0, $frequency_penalty));
+
+        $repetition_penalty = floatval(isset($GLOBALS["CONNECTOR"][$this->name]["repetition_penalty"]) ? $GLOBALS["CONNECTOR"][$this->name]["repetition_penalty"] : 0.0);
+        $repetition_penalty = max(0.0, min(2.0, $repetition_penalty));
+
+        $top_p = floatval(isset($GLOBALS["CONNECTOR"][$this->name]["top_p"]) ? $GLOBALS["CONNECTOR"][$this->name]["top_p"] : 1.0);
+        $top_p = max(0.0, min(1.0, $top_p));
+
+        $min_p = floatval(isset($GLOBALS["CONNECTOR"][$this->name]["min_p"]) ? $GLOBALS["CONNECTOR"][$this->name]["min_p"] : 0.0);
+        $min_p = max(0.0, min(1.0, $min_p));
+
+        $top_a = floatval(isset($GLOBALS["CONNECTOR"][$this->name]["top_a"]) ? $GLOBALS["CONNECTOR"][$this->name]["top_a"] : 0.0);
+        $top_a = max(0.0, min(1.0, $top_a));
+
+        $top_k = intval(isset($GLOBALS["CONNECTOR"][$this->name]["top_k"]) ? $GLOBALS["CONNECTOR"][$this->name]["top_k"] : 0);
+        $top_k = max(0, $top_k);
+
+        // Build request data
+        $data = array(
+            'model' => $this->_model,
+            'messages' => $contextData,
+            'stream' => false,
+            'usage' => ["include" => true],
+            'max_tokens' => $MAX_TOKENS,
+            'temperature' => $temperature,
+            'top_k' => $top_k,
+            'top_p' => $top_p,
+            'min_p' => $min_p,
+            'top_a' => $top_a,
+            'presence_penalty' => $presence_penalty,
+            'frequency_penalty' => $frequency_penalty,
+            'repetition_penalty' => $repetition_penalty,
+            'stop' => ['USER'],
+            'transforms' => []
+        );
+
+        // Handle custom stop sequences
+        if (isset($GLOBALS["CONNECTOR"][$this->name]["stop"]) && sizeof($GLOBALS["CONNECTOR"][$this->name]["stop"]) > 0) {
+            $data["stop"] = $GLOBALS["CONNECTOR"][$this->name]["stop"];
+        }
+
+        // Handle reasoning models
+        if ($this->_is_reasoning) {
+            $data["reasoning"] = array('exclude' => true, 'enabled' => false);
+            if (stripos($this->_model, "qwen3-") !== false) {
+                $data["enable_thinking"] = false;
+            }
+        }
+
+        // Handle OpenAI models
+        if ($this->_is_openai) {
+            $data['max_completion_tokens'] = $MAX_TOKENS;
+            unset($data['max_tokens']);
+            if ($this->_is_reasoning) {
+                $data["reasoning"] = array('exclude' => true, 'effort' => 'low');
+            }
+        }
+
+        // Handle Grok models (no stop param)
+        if ($this->_is_grok) {
+            unset($data["stop"]);
+        }
+
+        // Handle max_tokens edge cases
+        if ($MAX_TOKENS < 1) {
+            unset($data["max_completion_tokens"]);
+            unset($data["max_tokens"]);
+        }
+
+        // Add provider if configured
+        if (!empty($GLOBALS["CONNECTOR"][$this->name]["PROVIDER"])) {
+            $providers = explode(",", $GLOBALS["CONNECTOR"][$this->name]["PROVIDER"]);
+            $data["provider"] = ["order" => $providers];
+        }
+
+        // Apply custom parameters
+        foreach ($customParms as $parm => $value) {
+            $data[$parm] = $value;
+        }
+
+        $data["transforms"] = [];
+
+        $GLOBALS["DEBUG_DATA"]["full"] = $data;
+
+        // Set up HTTP request
+        $headers = array(
+            'Content-Type: application/json',
+            "Authorization: Bearer {$GLOBALS["CONNECTOR"][$this->name]["API_KEY"]}",
+            "HTTP-Referer:  https://dwemerdynamics.com/",
+            "X-Title: Dwemer Dynamics"
+        );
+
+        $options = array(
+            'http' => array(
+                'method' => 'POST',
+                'header' => implode("\r\n", $headers),
+                'content' => json_encode($data),
+                'timeout' => isset($GLOBALS["HTTP_TIMEOUT"]) ? (int)$GLOBALS["HTTP_TIMEOUT"] : 30
+            )
+        );
+
+        $context = stream_context_create($options);
+
+        @file_put_contents(__DIR__ . "/../log/context_sent_to_llm_fast.log", date(DATE_ATOM) . "\n=\n" . var_export($data, true) . "\n=\n", FILE_APPEND);
+
+        try {
+            $json_response = file_get_contents($this->_url, false, $context);
+            if ($json_response === false) {
+                $error = error_get_last();
+                error_log("Error fetching response from URL: " . $this->_url . ". Error: " . $error['message']);
+            }
+        } catch (Exception $e) {
+            error_log("Exception occurred while fetching response from URL: " . $this->_url . ". Exception: " . $e->getMessage());
+            $json_response = false;
+        }
+
+        @file_put_contents(__DIR__ . "/../log/output_from_llm_fast.log", date(DATE_ATOM) . "\n=\n{$json_response}\n=\n", FILE_APPEND);
+
+        if ($json_response) {
+            $text_response = json_decode($json_response, true);
+
+            if (is_array($text_response) && isset($text_response["choices"][0]["message"]["content"])) {
+                if (isset($GLOBALS["db"]) && $GLOBALS["db"]) {
+                    $GLOBALS["db"]->insert(
+                        'audit_request',
+                        array(
+                            'request' => json_encode($data),
+                            'result' => "Ok",
+                            'usage' => json_encode(isset($text_response["usage"]) ? $text_response["usage"] : []),
+                            'connector' => $callName,
+                            'url' => $this->_url
+                        )
+                    );
+                }
+                $content = $text_response["choices"][0]["message"]["content"];
+                // Strip reasoning tokens if present
+                if (function_exists('stripReasoningTokens')) {
+                    $content = stripReasoningTokens($content);
+                }
+                return $content;
+            } else {
+                if (isset($GLOBALS["db"]) && $GLOBALS["db"]) {
+                    $GLOBALS["db"]->insert(
+                        'audit_request',
+                        array(
+                            'request' => json_encode($data),
+                            'result' => "ERROR|INVALID JSON RESPONSE",
+                            'connector' => $callName,
+                            'url' => $this->_url
+                        )
+                    );
+                }
+                error_log("Error in openrouter cached request: $json_response");
+                return "";
+            }
+        } else {
+            if (isset($GLOBALS["db"]) && $GLOBALS["db"]) {
+                $GLOBALS["db"]->insert(
+                    'audit_request',
+                    array(
+                        'request' => json_encode($data),
+                        'result' => "ERROR|NO RESPONSE",
+                        'connector' => $this->name,
+                        'url' => $this->_url
+                    )
+                );
+            }
+        }
+
+        return "";
+    }
 
 }
 

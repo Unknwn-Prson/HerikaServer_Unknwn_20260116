@@ -1,7 +1,18 @@
-CHIM Cached Connector v1.5.4 - Release Notes
+CHIM Cached Connector v1.5.5 - Release Notes
 =============================================
 Release Date: 2026-02-06
 Compatible with: CHIM 2.3.3
+
+CHANGES IN v1.5.5
+-----------------
+
+1. NEW: Added fast_request() method for compatibility
+   - Allows cached connector to be used for non-streaming requests
+   - Fixes fatal error "Call to undefined method fast_request()"
+   - Supports CORE_CONNECTOR_MEDIUMTERM, CORE_CONNECTOR_SUMMARY use cases
+   - Enables cached connector to handle all connector type scenarios
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.4
 -----------------
