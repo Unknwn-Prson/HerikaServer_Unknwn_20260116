@@ -444,8 +444,8 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                         <span class="toggle-text">On</span>
                     </label>
                     <div style="height:6px;"></div>
-                    <label for='thinking_tokens'><span class='tip-label' data-tip='Maximum tokens for thinking/reasoning output (Anthropic/Gemini only). OpenAI uses effort_level instead. Leave empty to use default.'>Thinking Tokens</span></label>
-                    <input type="number" id="thinking_tokens" name="metadata[thinking_tokens]" value="<?= htmlspecialchars($thinkingTokens) ?>" min="0" step="1" placeholder="Optional">
+                    <label for='thinking_tokens'><span class='tip-label' data-tip='Maximum tokens for thinking/reasoning output (Anthropic/Gemini only). OpenAI uses effort_level instead. Anthropic requires minimum 1024. Default: 1024.'>Thinking Tokens</span></label>
+                    <input type="number" id="thinking_tokens" name="metadata[thinking_tokens]" value="<?= htmlspecialchars($thinkingTokens) ?>" min="1024" step="1" placeholder="1024">
                     <div style="height:6px;"></div>
                     <label for='effort_level'><span class='tip-label' data-tip='Reasoning effort level for OpenAI reasoning models (o1, o3, o4, gpt-5). minimal=Quick (gpt-5+), low=Basic, medium=Balanced, high=Thorough. Leave empty for default.'>Effort Level</span></label>
                     <select id="effort_level" name="metadata[effort_level]">
@@ -1633,8 +1633,8 @@ $effortLevel = $metadataArr["effort_level"] ?? '';
                     <span class="toggle-text">On</span>
                 </label>
                 <div style="height:6px;"></div>
-                <label for='thinking_tokens_modal'><span class='tip-label' data-tip='Maximum tokens for thinking/reasoning output (Anthropic/Gemini only). OpenAI uses effort_level instead. Leave empty to use default.'>Thinking Tokens</span></label>
-                <input type="number" id="thinking_tokens_modal" name="metadata[thinking_tokens]" value="<?= htmlspecialchars($thinkingTokens) ?>" min="0" step="1" placeholder="Optional">
+                <label for='thinking_tokens_modal'><span class='tip-label' data-tip='Maximum tokens for thinking/reasoning output (Anthropic/Gemini only). OpenAI uses effort_level instead. Anthropic requires minimum 1024. Default: 1024.'>Thinking Tokens</span></label>
+                <input type="number" id="thinking_tokens_modal" name="metadata[thinking_tokens]" value="<?= htmlspecialchars($thinkingTokens) ?>" min="1024" step="1" placeholder="1024">
                 <div style="height:6px;"></div>
                 <label for='effort_level_modal'><span class='tip-label' data-tip='Reasoning effort level for OpenAI reasoning models (o1, o3, o4, gpt-5). minimal=Quick (gpt-5+), low=Basic, medium=Balanced, high=Thorough. Leave empty for default.'>Effort Level</span></label>
                 <select id="effort_level_modal" name="metadata[effort_level]">
