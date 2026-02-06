@@ -1,7 +1,38 @@
-CHIM Cached Connector v1.5.6 - Release Notes
+CHIM Cached Connector v1.5.8 - Release Notes
 =============================================
 Release Date: 2026-02-06
 Compatible with: CHIM 2.3.3+ (synced with upstream 2026-02-06)
+
+CHANGES IN v1.5.8
+-----------------
+
+1. CRITICAL FIX: Gemini response cutoffs in simple format
+   - Root cause: _flushRemainingSimpleFormat() returned only ONE sentence at a time
+   - When stream ends, caller stops calling process() after isDone() returns true
+   - This caused remaining buffered sentences to never be returned
+   - Claude worked because Anthropic format has multiple end events (message_delta + message_stop)
+   - Gemini (OpenAI format) only has finish_reason, then stream ends immediately
+
+2. Solution: Added _flushAllRemainingSimpleFormat() method
+   - Returns ALL remaining sentences concatenated, not one at a time
+   - Used at all stream termination points: finish_reason, message_stop, [DONE], feof
+   - Ensures no content is lost regardless of how quickly stream closes
+
+3. Additional fix: JSON format now clears buffer after returning
+   - Prevents duplicate message returns on subsequent process() calls
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.7
+-----------------
+
+1. FIX: Added flush handling in message_delta stop_reason case
+   - Previously only message_stop had flush logic
+
+2. FIX: Added isDone() block flush check at start of process()
+   - Safety net for remaining content when stream is already done
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.6
 -----------------

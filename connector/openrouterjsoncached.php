@@ -9,7 +9,7 @@ require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_function
 class openrouterjsoncached
 {
     // Version tracking - update after making changes
-    const VERSION = 'OpenRouter Cache Connector v1.5.7 for CHIM 2.3.3+ | 2026/02/06';
+    const VERSION = 'OpenRouter Cache Connector v1.5.8 for CHIM 2.3.3+ | 2026/02/06';
     public $primary_handler;
     public $name;
 
@@ -995,11 +995,20 @@ class openrouterjsoncached
 
         if ($this->isDone()) {
             // Even if stream is done, check if there's remaining content to flush
-            // This fixes response cutoffs when multiple sentences are buffered
+            // This is a safety net - content should already be flushed at finish_reason/message_stop
             if ($this->_responseFormat === 'simple') {
-                $flushed = $this->_flushRemainingSimpleFormat();
+                $flushed = $this->_flushAllRemainingSimpleFormat();
                 if (!empty($flushed)) {
                     return $flushed;
+                }
+            } elseif ($this->_responseFormat === 'json' && !empty($this->_buffer)) {
+                // For JSON format, attempt final parse of accumulated buffer
+                // This catches cases where content was received but stop event came before parse
+                $result = $this->_parseAndReturnContent();
+                if (!empty($result)) {
+                    // Clear buffer to prevent duplicate returns on subsequent calls
+                    $this->_buffer = '';
+                    return $result;
                 }
             }
             return "";
@@ -1008,9 +1017,9 @@ class openrouterjsoncached
         $line = @fgets($this->primary_handler);
         if ($line === false) {
             if (feof($this->primary_handler)) {
-                // Stream ended - flush remaining simple format content if any
+                // Stream ended - flush ALL remaining simple format content
                 if ($this->_responseFormat === 'simple') {
-                    $flushed = $this->_flushRemainingSimpleFormat();
+                    $flushed = $this->_flushAllRemainingSimpleFormat();
                     if (!empty($flushed)) {
                         return $flushed;
                     }
@@ -1037,9 +1046,9 @@ class openrouterjsoncached
         if (strpos($line, 'data: ') === 0) {
             $jsonData = trim(substr($line, 6));
             if ($jsonData === '[DONE]') {
-                // Stream ended with explicit DONE marker - flush remaining simple format content if any
+                // Stream ended with explicit DONE marker - flush ALL remaining content
                 if ($this->_responseFormat === 'simple') {
-                    $flushed = $this->_flushRemainingSimpleFormat();
+                    $flushed = $this->_flushAllRemainingSimpleFormat();
                     if (!empty($flushed)) {
                         return $flushed;
                     }
@@ -1071,11 +1080,11 @@ class openrouterjsoncached
                                 if (isset($data['delta']['stop_reason']) && $data['delta']['stop_reason'] !== null) {
                                     logMessage("[{$this->name}:{$herikaName}] Stop (delta): " . $data['delta']['stop_reason']);
 
-                                    // Flush remaining simple format content before closing
-                                    // (Same as message_stop case - fixes Gemini response cutoffs)
+                                    // Flush ALL remaining content before closing
                                     if ($this->_responseFormat === 'simple') {
-                                        $flushed = $this->_flushRemainingSimpleFormat();
+                                        $flushed = $this->_flushAllRemainingSimpleFormat();
                                         if (!empty($flushed)) {
+                                            $this->_forcedClose = true;
                                             return $flushed;
                                         }
                                     }
@@ -1109,10 +1118,11 @@ class openrouterjsoncached
                                     @file_put_contents(__DIR__ . DIRECTORY_SEPARATOR . "_cached_perf.log", $logPerfEntry, FILE_APPEND);
                                 }
 
-                                // Flush remaining simple format content before closing
+                                // Flush ALL remaining content before closing
                                 if ($this->_responseFormat === 'simple') {
-                                    $flushed = $this->_flushRemainingSimpleFormat();
+                                    $flushed = $this->_flushAllRemainingSimpleFormat();
                                     if (!empty($flushed)) {
+                                        $this->_forcedClose = true;
                                         return $flushed;
                                     }
                                 }
@@ -1149,10 +1159,13 @@ class openrouterjsoncached
                         if (isset($data["choices"][0]["finish_reason"]) && $data["choices"][0]["finish_reason"] !== null) {
                             logMessage("[{$this->name}:{$herikaName}] Stop (choice): " . $data["choices"][0]["finish_reason"]);
 
-                            // Flush remaining simple format content before closing
+                            // CRITICAL FIX: Flush ALL remaining content at once
+                            // Gemini/OpenAI format doesn't have additional events after finish_reason,
+                            // so we must return all content now before _forcedClose is set
                             if ($this->_responseFormat === 'simple') {
-                                $flushed = $this->_flushRemainingSimpleFormat();
+                                $flushed = $this->_flushAllRemainingSimpleFormat();
                                 if (!empty($flushed)) {
+                                    $this->_forcedClose = true;
                                     return $flushed;
                                 }
                             }
@@ -1177,10 +1190,11 @@ class openrouterjsoncached
         } elseif (trim($line) === "event: message_stop") {
             logMessage("[{$this->name}:{$herikaName}] Explicit stream end event received.");
 
-            // Flush remaining simple format content before closing
+            // Flush ALL remaining content before closing
             if ($this->_responseFormat === 'simple') {
-                $flushed = $this->_flushRemainingSimpleFormat();
+                $flushed = $this->_flushAllRemainingSimpleFormat();
                 if (!empty($flushed)) {
+                    $this->_forcedClose = true;
                     return $flushed;
                 }
             }
@@ -1392,6 +1406,67 @@ class openrouterjsoncached
         }
 
         return "";
+    }
+
+    /**
+     * Flushes ALL remaining simple format content at once.
+     * Used when stream definitively ends to prevent content loss when caller stops
+     * calling process() after isDone() returns true.
+     *
+     * CRITICAL FIX for Gemini response cutoffs: Unlike _flushRemainingSimpleFormat()
+     * which returns one sentence at a time, this returns ALL remaining content
+     * concatenated, ensuring nothing is lost when the stream ends.
+     */
+    private function _flushAllRemainingSimpleFormat() {
+        if ($this->_metadataEnd === -1) {
+            logMessage("[{$this->name}] FlushAll: No metadata extracted, nothing to flush");
+            return "";
+        }
+
+        // Normalize buffer for prefill
+        $normalizedBuffer = $this->_buffer;
+        if ($this->_usedPrefill && !empty($normalizedBuffer) && $normalizedBuffer[0] !== '(') {
+            $normalizedBuffer = '(' . $normalizedBuffer;
+        }
+
+        // Extract message portion
+        $message = substr($normalizedBuffer, $this->_metadataEnd);
+
+        // Split into sentences
+        $sentences = $this->_splitIntoSentences($message);
+        logMessage("[{$this->name}] FlushAll: Found " . count($sentences) . " sentences, sent " . $this->_sentencesSent);
+
+        // Collect ALL unsent sentences
+        $allRemaining = "";
+        while ($this->_sentencesSent < count($sentences)) {
+            $sentence = $sentences[$this->_sentencesSent];
+            $this->_sentencesSent++;
+            $allRemaining .= $sentence . ' ';
+        }
+
+        // Also add trailing partial if any
+        if (!$this->_flushedPartial) {
+            $this->_flushedPartial = true;
+
+            if (preg_match_all('/[.!?…]/', $message, $matches, PREG_OFFSET_CAPTURE)) {
+                $lastMatch = end($matches[0]);
+                $lastPunctPos = $lastMatch[1];
+                $partial = trim(substr($message, $lastPunctPos + 1));
+            } else {
+                $partial = trim($message);
+            }
+
+            if (!empty($partial) && !preg_match('/[.!?…]$/', $partial)) {
+                $partial .= '.';
+                $allRemaining .= $partial . ' ';
+            }
+        }
+
+        if (!empty($allRemaining)) {
+            logMessage("[{$this->name}] FlushAll: Returning all remaining: " . strlen($allRemaining) . " chars");
+        }
+
+        return $allRemaining;
     }
 
     /**
