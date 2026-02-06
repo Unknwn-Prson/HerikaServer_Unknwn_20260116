@@ -9,7 +9,7 @@ require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_function
 class openrouterjsoncached
 {
     // Version tracking - update after making changes
-    const VERSION = 'OpenRouter Cache Connector v1.5.8 for CHIM 2.3.3+ | 2026/02/06';
+    const VERSION = 'OpenRouter Cache Connector v1.5.9 for CHIM 2.3.3+ | 2026/02/06';
     public $primary_handler;
     public $name;
 
@@ -798,6 +798,14 @@ class openrouterjsoncached
             $reasoning["effort"] = $effort_level;
         } else if ($reasoning["enabled"]) {
             $reasoning["max_tokens"] = intval($thinkingTokens);
+        }
+
+        // Convert messages to simple string format for non-Anthropic providers
+        // Anthropic uses: {"role": "...", "content": [{"type": "text", "text": "..."}]}
+        // OpenAI/Others use: {"role": "...", "content": "..."}
+        if ($this->_provider_caching === "OpenAI" || $this->_provider_caching === "None") {
+            $finalMessagesToSend = $this->_convertToSimpleContentFormat($finalMessagesToSend);
+            logMessage("[{$this->name}] Converted messages to simple content format for provider: {$this->_provider_caching}");
         }
 
         // Construct payload
@@ -1813,6 +1821,54 @@ class openrouterjsoncached
     public function setDone()
     {
         $this->_forcedClose=true;
+    }
+
+    /**
+     * Converts messages from Anthropic content block format to simple string format.
+     * Anthropic format: {"role": "...", "content": [{"type": "text", "text": "..."}]}
+     * Simple format:    {"role": "...", "content": "..."}
+     *
+     * Used for OpenAI and "None" (generic) cache providers that don't support
+     * Anthropic-style content blocks.
+     *
+     * @param array $messages Array of message objects
+     * @return array Converted messages with simple string content
+     */
+    private function _convertToSimpleContentFormat($messages) {
+        $converted = [];
+
+        foreach ($messages as $msg) {
+            $newMsg = $msg;
+
+            if (isset($msg['content']) && is_array($msg['content'])) {
+                // Check if it's an array of content blocks (Anthropic format)
+                // vs a simple array of strings (which some code might produce)
+                $textParts = [];
+
+                foreach ($msg['content'] as $block) {
+                    if (is_array($block)) {
+                        if (isset($block['type']) && $block['type'] === 'text' && isset($block['text'])) {
+                            $textParts[] = $block['text'];
+                        } elseif (isset($block['text'])) {
+                            // Block without type but has text
+                            $textParts[] = $block['text'];
+                        }
+                        // Skip cache_control and other non-text fields
+                    } elseif (is_string($block)) {
+                        // Simple string in array
+                        $textParts[] = $block;
+                    }
+                }
+
+                // Join all text parts with newlines
+                $newMsg['content'] = implode("\n", $textParts);
+            }
+            // If content is already a string, leave it as-is
+
+            $converted[] = $newMsg;
+        }
+
+        return $converted;
     }
 
     /**

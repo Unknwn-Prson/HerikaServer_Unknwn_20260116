@@ -1,7 +1,25 @@
-CHIM Cached Connector v1.5.8 - Release Notes
+CHIM Cached Connector v1.5.9 - Release Notes
 =============================================
 Release Date: 2026-02-06
 Compatible with: CHIM 2.3.3+ (synced with upstream 2026-02-06)
+
+CHANGES IN v1.5.9
+-----------------
+
+1. FIX: Palmyra and other non-Anthropic models with "None" caching
+   - Root cause: Messages were always sent in Anthropic content block format
+   - Anthropic format: {"content": [{"type": "text", "text": "..."}]}
+   - OpenAI/generic format: {"content": "..."}
+   - Many models (Palmyra, etc.) don't support the Anthropic array format
+   - Added _convertToSimpleContentFormat() to convert messages for OpenAI/None modes
+
+2. UI: Simplified caching provider options
+   - Renamed "Anthropic" to "Claude | Gemini" (both work with Anthropic format)
+   - Renamed "OpenAI" to "GPT" for clarity
+   - Removed separate "Gemini" option (use "Claude | Gemini" instead)
+   - Kept "None" for models that don't support caching
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.8
 -----------------

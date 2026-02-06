@@ -491,14 +491,13 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                 <!-- Caching Settings (shown only for cached connectors) -->
                 <div id="caching_settings" style="display:none; margin-top:16px; padding:12px; border:1px solid #4a4a4a; border-radius:8px; background:#1a1a1a;">
                     <div style="font-weight:600; color:#e9efff; margin-bottom:4px;">🔄 Caching Settings</div>
-                    <div style="font-size:11px; color:#888; margin-bottom:8px;">OpenRouter Cache Connector v1.5.5 for CHIM 2.3.3</div>
+                    <div style="font-size:11px; color:#888; margin-bottom:8px;">OpenRouter Cache Connector v1.5.9 for CHIM 2.3.3+</div>
                     <div style="font-size:11px; color:#b08d57; margin-bottom:12px; padding:6px 8px; background:rgba(176,141,87,0.1); border-radius:4px;">⚠️ Note: Web search ("Skyrim search:") is not currently supported by the cached connector.</div>
 
                     <label for='provider_caching'>Provider Caching Type</label><br>
                     <select name="metadata[provider_caching]" id="provider_caching">
-                        <option value="Anthropic" <?= ($metadata['provider_caching'] ?? 'Anthropic') === 'Anthropic' ? 'selected' : '' ?>>Anthropic</option>
-                        <option value="OpenAI" <?= ($metadata['provider_caching'] ?? '') === 'OpenAI' ? 'selected' : '' ?>>OpenAI</option>
-                        <option value="Gemini" <?= ($metadata['provider_caching'] ?? '') === 'Gemini' ? 'selected' : '' ?>>Gemini (untested)</option>
+                        <option value="Anthropic" <?= ($metadata['provider_caching'] ?? 'Anthropic') === 'Anthropic' ? 'selected' : '' ?>>Claude | Gemini</option>
+                        <option value="OpenAI" <?= ($metadata['provider_caching'] ?? '') === 'OpenAI' ? 'selected' : '' ?>>GPT</option>
                         <option value="None" <?= ($metadata['provider_caching'] ?? '') === 'None' ? 'selected' : '' ?>>None (no caching)</option>
                     </select><br>
 
