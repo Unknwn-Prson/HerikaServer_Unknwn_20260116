@@ -565,6 +565,14 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                     </div>
 
                     <div style="margin-top:12px;">
+                        <label class="label-with-toggle"><span class='tip-label' data-tip='Disable legacy sentence filters in returnLines(): array check, &lt;2 char check, "The Narrator:" check. These can cause response cutoffs. Modern models do not need these safeguards. Recommended ON.'>Disable Sentence Filters (Recommended)</span>
+                            <input type="hidden" name="metadata[disable_sentence_filters]" value="0">
+                            <input type="checkbox" name="metadata[disable_sentence_filters]" value="1" <?= (!isset($metadata['disable_sentence_filters']) || $metadata['disable_sentence_filters']) ? 'checked' : '' ?>>
+                            <span class="toggle-text">On</span>
+                        </label>
+                    </div>
+
+                    <div style="margin-top:12px;">
                         <label for='max_dialogue_cache_context_size'><span class='tip-label' data-tip='Maximum number of dialogue entries to cache in temp files. Higher = more context but larger cache files. Recommended: 93'>Max Dialogue Cache Context Size</span></label><br>
                         <input type='number' name='metadata[max_dialogue_cache_context_size]' id='max_dialogue_cache_context_size' value='<?= htmlspecialchars($metadata['max_dialogue_cache_context_size'] ?? '93') ?>' min='0' step='1'>
                     </div>
@@ -1749,6 +1757,14 @@ $effortLevel = $metadataArr["effort_level"] ?? '';
                     <label class="label-with-toggle"><span class='tip-label' data-tip='Preserve text between asterisks (*like this*) instead of stripping it. Useful for roleplay formatting, emphasis, and narration. When OFF, text between asterisks is removed (default TTS behavior).'>Preserve Asterisk Content</span>
                         <input type="hidden" name="metadata[preserve_asterisks]" value="0">
                         <input type="checkbox" name="metadata[preserve_asterisks]" value="1" <?= (isset($metadata_main['preserve_asterisks']) && $metadata_main['preserve_asterisks']) ? 'checked' : '' ?>>
+                        <span class="toggle-text">On</span>
+                    </label>
+                </div>
+
+                <div style="margin-top:12px;">
+                    <label class="label-with-toggle"><span class='tip-label' data-tip='Disable legacy sentence filters in returnLines(): array check, &lt;2 char check, "The Narrator:" check. These can cause response cutoffs. Modern models do not need these safeguards. Recommended ON.'>Disable Sentence Filters (Recommended)</span>
+                        <input type="hidden" name="metadata[disable_sentence_filters]" value="0">
+                        <input type="checkbox" name="metadata[disable_sentence_filters]" value="1" <?= (!isset($metadata_main['disable_sentence_filters']) || $metadata_main['disable_sentence_filters']) ? 'checked' : '' ?>>
                         <span class="toggle-text">On</span>
                     </label>
                 </div>

@@ -455,6 +455,16 @@ class openrouterjsoncached
         if ($preserveAsterisks) {
             $GLOBALS["PRESERVE_ASTERISKS"] = true;
         }
+
+        // Sentence filter bypass: skip legacy sentence validation in returnLines()
+        // Disables: is_array check, <2 char check, "The Narrator:" check
+        // Uses the DISABLE_SENTENCE_FILTERS mechanism in chat_helper_functions.php returnLines()
+        $disableSentenceFilters = isset($GLOBALS["CONNECTOR"][$this->name]["disable_sentence_filters"])
+            ? (bool)$GLOBALS["CONNECTOR"][$this->name]["disable_sentence_filters"]
+            : true; // Default: disabled for cached connector (modern models don't need these)
+        if ($disableSentenceFilters) {
+            $GLOBALS["DISABLE_SENTENCE_FILTERS"] = true;
+        }
         // --- END CACHED CONNECTOR SETTINGS ---
 
         // Memory mode configuration (NEW in v2)
