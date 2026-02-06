@@ -1,7 +1,19 @@
-CHIM Cached Connector v1.5.2 - Release Notes
+CHIM Cached Connector v1.5.3 - Release Notes
 =============================================
 Release Date: 2026-02-06
 Compatible with: CHIM 2.3.3
+
+CHANGES IN v1.5.3
+-----------------
+
+1. BUG FIX: "Preserve Asterisk Content" now truly preserves asterisks
+   - Previously was stripping * characters while keeping text (wrong)
+   - Now skips ALL asterisk processing when enabled:
+     * No stripping of * characters
+     * No removal of text between asterisks
+     * No hardcoded emote stripping (*smirks*, *laughs*, etc.)
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.2
 -----------------
