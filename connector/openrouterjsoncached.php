@@ -9,7 +9,7 @@ require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_function
 class openrouterjsoncached
 {
     // Version tracking - update after making changes
-    const VERSION = 'OpenRouter Cache Connector v1.5.6 for CHIM 2.3.3+ | 2026/02/06';
+    const VERSION = 'OpenRouter Cache Connector v1.5.7 for CHIM 2.3.3+ | 2026/02/06';
     public $primary_handler;
     public $name;
 
@@ -993,8 +993,17 @@ class openrouterjsoncached
         global $alreadysent;
         $herikaName = isset($GLOBALS["HERIKA_NAME"]) ? $GLOBALS["HERIKA_NAME"] : 'default_herika';
 
-        if ($this->isDone())
+        if ($this->isDone()) {
+            // Even if stream is done, check if there's remaining content to flush
+            // This fixes response cutoffs when multiple sentences are buffered
+            if ($this->_responseFormat === 'simple') {
+                $flushed = $this->_flushRemainingSimpleFormat();
+                if (!empty($flushed)) {
+                    return $flushed;
+                }
+            }
             return "";
+        }
 
         $line = @fgets($this->primary_handler);
         if ($line === false) {
@@ -1061,6 +1070,16 @@ class openrouterjsoncached
                             case 'message_delta':
                                 if (isset($data['delta']['stop_reason']) && $data['delta']['stop_reason'] !== null) {
                                     logMessage("[{$this->name}:{$herikaName}] Stop (delta): " . $data['delta']['stop_reason']);
+
+                                    // Flush remaining simple format content before closing
+                                    // (Same as message_stop case - fixes Gemini response cutoffs)
+                                    if ($this->_responseFormat === 'simple') {
+                                        $flushed = $this->_flushRemainingSimpleFormat();
+                                        if (!empty($flushed)) {
+                                            return $flushed;
+                                        }
+                                    }
+
                                     $this->_forcedClose = true;
                                 }
                                 break;
