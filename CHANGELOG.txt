@@ -1,7 +1,29 @@
-CHIM Cached Connector v1.5.5 - Release Notes
+CHIM Cached Connector v1.5.6 - Release Notes
 =============================================
 Release Date: 2026-02-06
-Compatible with: CHIM 2.3.3
+Compatible with: CHIM 2.3.3+ (synced with upstream 2026-02-06)
+
+CHANGES IN v1.5.6
+-----------------
+
+1. MAJOR: Synced lib files with upstream CHIM (2026-02-06)
+   - Updated lib/data_functions.php from upstream (now 6440+ lines)
+   - Updated lib/chat_helper_functions.php from upstream (now 2200+ lines)
+   - Fixes "Call to undefined function getGoldFromMetadata()" error
+   - Includes all CHIM stealth updates since 2025-12-17
+
+2. Re-applied cached connector modifications to updated files:
+   - LOCATION_BLACKLIST defensive fix in data_functions.php
+   - handlesSentenceSplitting bypass in data_functions.php
+   - PRESERVE_ASTERISKS mode in chat_helper_functions.php
+   - DISABLE_SENTENCE_FILTERS bypass in chat_helper_functions.php
+
+3. Distribution uses subdirectory structure to prevent accidental overwrites
+
+NOTE: Only overwrites lib/data_functions.php and lib/chat_helper_functions.php
+      (same files as v1.5.0-v1.5.5, just now synced with upstream)
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.5
 -----------------
