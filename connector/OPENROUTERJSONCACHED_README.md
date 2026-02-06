@@ -1,4 +1,4 @@
-# OpenRouter Cached Connector v1.5.0
+# OpenRouter Cached Connector v1.5.1
 
 A high-performance cached connector for CHIM 2.3.3 with multi-provider caching support, flexible response formats, automatic cache invalidation, and comprehensive cache management tools.
 
@@ -6,6 +6,7 @@ A high-performance cached connector for CHIM 2.3.3 with multi-provider caching s
 
 | Version | CHIM Version | Release Date |
 |---------|--------------|--------------|
+| v1.5.1  | CHIM 2.3.3   | 2026-02-06   |
 | v1.5.0  | CHIM 2.3.3   | 2026-02-04   |
 | v2.0.1  | CHIM 2.3.3   | 2026-01-29   |
 

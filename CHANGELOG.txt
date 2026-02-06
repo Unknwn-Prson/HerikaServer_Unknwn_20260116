@@ -1,7 +1,18 @@
-CHIM Cached Connector v1.5.0 - Release Notes
+CHIM Cached Connector v1.5.1 - Release Notes
 =============================================
-Release Date: 2026-02-04
+Release Date: 2026-02-06
 Compatible with: CHIM 2.3.3
+
+CHANGES IN v1.5.1
+-----------------
+
+1. BUG FIX: Thinking toggle not working on Claude/Anthropic models
+   - Changed default thinking_tokens from 1000 to 1024
+   - Anthropic requires minimum 1024 budget_tokens for extended thinking
+   - This caused thinking to work on Gemini but silently fail on Claude Opus 4.5
+   - Updated UI inputs with min="1024" and informative placeholder
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.0
 -----------------
