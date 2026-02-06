@@ -1,4 +1,4 @@
-CHIM Cached Connector v1.5.1 - Installation Instructions
+CHIM Cached Connector v1.5.2 - Installation Instructions
 ========================================================
 
 IMPORTANT: READ BEFORE INSTALLING
@@ -7,7 +7,7 @@ This connector provides advanced caching, thinking/reasoning support,
 flexible quality instruction control, and true sentence-by-sentence
 streaming for simple format.
 
-v1.5.1 is compatible with CHIM 2.3.3.
+v1.5.2 is compatible with CHIM 2.3.3.
 
 REQUIREMENTS
 ------------
@@ -61,7 +61,7 @@ INSTALLATION STEPS
    - Create or edit a connector
    - Select "openrouterjsoncached" from the Driver dropdown
    - Verify caching settings section appears
-   - Version should display as v1.5.1
+   - Version should display as v1.5.2
 
 6. CONFIGURE CONNECTOR
    a. Basic Settings:
@@ -80,7 +80,7 @@ INSTALLATION STEPS
       - Thinking Tokens: Set max tokens (default 1000)
       - Effort Level: Choose minimal/low/medium/high
 
-   d. New in v1.5.1:
+   d. New in v1.5.2:
       - Disable Refusal Filter: ON by default (recommended)
         Prevents false-positive response cutoffs for Gemini/Palmyra
       - Preserve Asterisk Content: OFF by default
@@ -96,10 +96,10 @@ INSTALLATION STEPS
 
 UPGRADING FROM v2.0.1
 ---------------------
-v1.5.1 restores features that were lost when upgrading from v1.4 to v2.0.1.
+v1.5.2 restores features that were lost when upgrading from v1.4 to v2.0.1.
 See CACHED_CONNECTOR_UPGRADE_AUDIT.md for details.
 
-New in v1.5.1:
+New in v1.5.2:
 - Reasoning token stripping (was in v1.4, lost in v2.0.x)
 - Immediate simple-format streaming (was in v1.4, lost in v2.0.x)
 - Minimize Quality Instructions (was in v1.4, lost in v2.0.x)
@@ -138,6 +138,6 @@ This fixes an upstream LOCATION_BLACKLIST bug in CHIM 2.3.3.
 
 VERSION INFORMATION
 -------------------
-Package: CHIM Cached Connector v1.5.1
+Package: CHIM Cached Connector v1.5.2
 Release Date: 2026-02-04
 CHIM Compatibility: 2.3.3

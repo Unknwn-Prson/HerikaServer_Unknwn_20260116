@@ -1,7 +1,19 @@
-CHIM Cached Connector v1.5.1 - Release Notes
+CHIM Cached Connector v1.5.2 - Release Notes
 =============================================
 Release Date: 2026-02-06
 Compatible with: CHIM 2.3.3
+
+CHANGES IN v1.5.2
+-----------------
+
+1. NEW: "None (no caching)" option for Provider Caching Type
+   - Allows using connector features without any cache markers
+   - Fixes compatibility with non-cached models like Palmyra X5
+   - Skips all cache_control parameters in API requests
+
+2. UI: Marked Gemini caching as "(untested)" in dropdown
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.1
 -----------------
