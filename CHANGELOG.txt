@@ -1,17 +1,25 @@
-CHIM Cached Connector v1.5.3 - Release Notes
+CHIM Cached Connector v1.5.4 - Release Notes
 =============================================
 Release Date: 2026-02-06
 Compatible with: CHIM 2.3.3
+
+CHANGES IN v1.5.4
+-----------------
+
+1. NEW: "Disable Sentence Filters" setting (defaults ON)
+   - Bypasses legacy returnLines() checks that cause response cutoffs
+   - Skips: array check, <2 char check, "The Narrator:" check
+   - Also changed return to continue so bad sentences don't kill the rest
+   - Fixes Gemini/other model responses being cut off mid-stream
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.3
 -----------------
 
 1. BUG FIX: "Preserve Asterisk Content" now truly preserves asterisks
    - Previously was stripping * characters while keeping text (wrong)
-   - Now skips ALL asterisk processing when enabled:
-     * No stripping of * characters
-     * No removal of text between asterisks
-     * No hardcoded emote stripping (*smirks*, *laughs*, etc.)
+   - Now skips ALL asterisk processing when enabled
 
 --------------------------------------------------------------------------------
 
