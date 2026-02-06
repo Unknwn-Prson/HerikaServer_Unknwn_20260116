@@ -600,7 +600,7 @@ class openrouterjsoncached
                 $finalSend = $systemContentCurrent . $customInstructionPart . "\n" . $actionsText;
 
                 $content = ['type' => 'text', 'text' => $finalSend];
-                if ($this->_provider_caching !== "OpenAI") {
+                if ($this->_provider_caching !== "OpenAI" && $this->_provider_caching !== "None") {
                     $content['cache_control'] = $cacheControlType;
                 }
                 $systemEntries[] = array("role" => "system", "content" => array($content));
@@ -721,12 +721,12 @@ class openrouterjsoncached
                     $indexToCache = 33; // Gemini requires minimum 32 tokens
                 }
 
-                if (isset($completeEventList[$indexToCache]) && $this->_provider_caching != "OpenAI") {
+                if (isset($completeEventList[$indexToCache]) && $this->_provider_caching != "OpenAI" && $this->_provider_caching != "None") {
                     $completeEventList[$indexToCache]["cache_control"] = $cacheControlType;
                 }
             } else {
                 logMessage("Using standard caching with dialogue_cache_uncached_count=$dialogue_cache_uncached_count");
-                if (isset($completeEventList[$lastIndex]) && $this->_provider_caching != "OpenAI") {
+                if (isset($completeEventList[$lastIndex]) && $this->_provider_caching != "OpenAI" && $this->_provider_caching != "None") {
                     $completeEventList[$lastIndex]["cache_control"] = $cacheControlType;
                     logMessage("Cache control placed at index $lastIndex");
                 }

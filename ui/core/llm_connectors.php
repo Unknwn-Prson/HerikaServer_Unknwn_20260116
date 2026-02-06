@@ -498,7 +498,8 @@ if (isset($_GET["partial"]) && $_GET["partial"] === "editor") {
                     <select name="metadata[provider_caching]" id="provider_caching">
                         <option value="Anthropic" <?= ($metadata['provider_caching'] ?? 'Anthropic') === 'Anthropic' ? 'selected' : '' ?>>Anthropic</option>
                         <option value="OpenAI" <?= ($metadata['provider_caching'] ?? '') === 'OpenAI' ? 'selected' : '' ?>>OpenAI</option>
-                        <option value="Gemini" <?= ($metadata['provider_caching'] ?? '') === 'Gemini' ? 'selected' : '' ?>>Gemini</option>
+                        <option value="Gemini" <?= ($metadata['provider_caching'] ?? '') === 'Gemini' ? 'selected' : '' ?>>Gemini (untested)</option>
+                        <option value="None" <?= ($metadata['provider_caching'] ?? '') === 'None' ? 'selected' : '' ?>>None (no caching)</option>
                     </select><br>
 
                     <label for='response_format'>Response Format</label><br>
@@ -1689,7 +1690,8 @@ $effortLevel = $metadataArr["effort_level"] ?? '';
                 <select name="metadata[provider_caching]" id="provider_caching_main">
                     <option value="Anthropic" <?= ($metadata_main['provider_caching'] ?? 'Anthropic') === 'Anthropic' ? 'selected' : '' ?>>Anthropic</option>
                     <option value="OpenAI" <?= ($metadata_main['provider_caching'] ?? '') === 'OpenAI' ? 'selected' : '' ?>>OpenAI</option>
-                    <option value="Gemini" <?= ($metadata_main['provider_caching'] ?? '') === 'Gemini' ? 'selected' : '' ?>>Gemini</option>
+                    <option value="Gemini" <?= ($metadata_main['provider_caching'] ?? '') === 'Gemini' ? 'selected' : '' ?>>Gemini (untested)</option>
+                    <option value="None" <?= ($metadata_main['provider_caching'] ?? '') === 'None' ? 'selected' : '' ?>>None (no caching)</option>
                 </select><br>
 
                 <label for='response_format_main'>Response Format</label><br>
