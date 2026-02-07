@@ -9,7 +9,7 @@ require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_function
 class openrouterjsoncached
 {
     // Version tracking - update after making changes
-    const VERSION = 'OpenRouter Cache Connector v1.5.9 for CHIM 2.3.3+ | 2026/02/06';
+    const VERSION = 'OpenRouter Cache Connector v1.5.10 for CHIM 2.3.3+ | 2026/02/07';
     public $primary_handler;
     public $name;
 
@@ -821,8 +821,15 @@ class openrouterjsoncached
             'repetition_penalty' => floatval((isset($GLOBALS["CONNECTOR"][$this->name]["repetition_penalty"])) ? $GLOBALS["CONNECTOR"][$this->name]["repetition_penalty"] : 1),
             'min_p' => floatval((isset($GLOBALS["CONNECTOR"][$this->name]["min_p"])) ? $GLOBALS["CONNECTOR"][$this->name]["min_p"] : 0),
             'top_a' => floatval((isset($GLOBALS["CONNECTOR"][$this->name]["top_a"])) ? $GLOBALS["CONNECTOR"][$this->name]["top_a"] : 0),
-            'reasoning' => $reasoning
+            'transforms' => array(),
+            'stop' => array('USER')
         );
+
+        // Only add reasoning parameter for providers/models that support it
+        // Don't add for "None" mode (generic models like Palmyra don't support it)
+        if ($this->_provider_caching !== "None") {
+            $data['reasoning'] = $reasoning;
+        }
 
         // Handle max tokens
         $effectiveMaxTokens = null;

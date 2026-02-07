@@ -1,7 +1,23 @@
-CHIM Cached Connector v1.5.9 - Release Notes
-=============================================
-Release Date: 2026-02-06
+CHIM Cached Connector v1.5.10 - Release Notes
+==============================================
+Release Date: 2026-02-07
 Compatible with: CHIM 2.3.3+ (synced with upstream 2026-02-06)
+
+CHANGES IN v1.5.10
+------------------
+
+1. FIX: Additional Palmyra/generic model compatibility improvements
+   - Removed 'reasoning' parameter for "None" caching mode (unsupported by most generic models)
+   - Added 'transforms' array to match standard connector
+   - Added 'stop' array with 'USER' to match standard connector format
+   - These changes make the "None" mode payload closer to openrouterjson.php
+
+2. INVESTIGATING: Simple format actions reported as not working
+   - Code review shows action parsing logic appears correct
+   - Need more testing/logs to identify root cause
+   - JSON format actions work correctly
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.9
 -----------------
