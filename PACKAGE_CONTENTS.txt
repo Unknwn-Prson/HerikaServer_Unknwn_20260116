@@ -1,8 +1,8 @@
-CHIM Cached Connector v1.5.5 - Package Contents
-================================================
+CHIM Cached Connector v1.5.10 - Package Contents
+=================================================
 
-Compatible with: CHIM 2.3.3
-Release Date: 2026-02-06
+Compatible with: CHIM 2.3.3+
+Release Date: 2026-02-07
 
 PACKAGE STRUCTURE
 -----------------
@@ -10,17 +10,14 @@ PACKAGE STRUCTURE
 CORE FILES (Required - Minimum for connector to function):
 - conf/conf_schema.json              - Connector registration
 - lib/core/llm_connector.class.php   - Connector instantiation
-- ui/core/llm_connectors.php         - Configuration UI (v1.5.5)
-- connector/openrouterjsoncached.php - Main connector (v1.5.5)
+- ui/core/llm_connectors.php         - Configuration UI (v1.5.10)
+- connector/openrouterjsoncached.php - Main connector (v1.5.10)
 - connector/openrouterjsoncached_helpers.php - Helper functions
-
-NEW FILES (Added to CHIM - do not overwrite anything):
-- lib/reasoning_helpers.php              - Reasoning/CoT token stripping
-- ext/cached_connector/dialogue_prompt.php - Minimize Quality Instructions override
 
 UPSTREAM OVERWRITES (Replace upstream files - marked with BEGIN/END comments):
 - lib/data_functions.php         - handlesSentenceSplitting + LOCATION_BLACKLIST fix
 - lib/chat_helper_functions.php  - PRESERVE_ASTERISKS mode in unmoodSentence()
+- prompts/dialogue_prompt.php    - Minimize Quality Instructions feature
 
 DOCUMENTATION:
 - CHANGELOG.txt

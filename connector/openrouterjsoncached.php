@@ -9,7 +9,7 @@ require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_function
 class openrouterjsoncached
 {
     // Version tracking - update after making changes
-    const VERSION = 'OpenRouter Cache Connector v1.5.10 for CHIM 2.3.3+ | 2026/02/07';
+    const VERSION = 'OpenRouter Cache Connector v1.5.11 for CHIM 2.3.3+ | 2026/02/08';
     public $primary_handler;
     public $name;
 
@@ -813,6 +813,7 @@ class openrouterjsoncached
             'model' => $this->_model,
             'messages' => $finalMessagesToSend,
             'stream' => true,
+            'usage' => array("include" => true),
             'temperature' => floatval((isset($GLOBALS["CONNECTOR"][$this->name]["temperature"])) ? $GLOBALS["CONNECTOR"][$this->name]["temperature"] : 1),
             'top_k' => floatval((isset($GLOBALS["CONNECTOR"][$this->name]["top_k"])) ? $GLOBALS["CONNECTOR"][$this->name]["top_k"] : 0),
             'top_p' => floatval((isset($GLOBALS["CONNECTOR"][$this->name]["top_p"])) ? $GLOBALS["CONNECTOR"][$this->name]["top_p"] : 1),

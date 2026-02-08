@@ -25,7 +25,7 @@ $TEMPLATE_DIALOG=" Write {$GLOBALS["HERIKA_NAME"]}'s next dialogue line should b
 // Morgan|ScriptQueue|Wrestling, you say? Now *that* sounds like a fun way to get acquainted.//Vixi Talax//
 //
 
-// CHIM_CACHED_FEATURE: MINIMIZE_QUALITY_PROMPT
+// --- BEGIN CACHED CONNECTOR MODIFICATION: MINIMIZE_QUALITY_PROMPT ---
 // Configurable quality instructions toggle
 // Check connector-specific setting for minimize_quality_prompt (defaults to true/minimized for better advanced model performance)
 $useMinimizedPrompt = true; // Default to minimized (recommended for advanced models like Claude 4.5, GPT-4, etc.)
@@ -47,6 +47,7 @@ if ($useMinimizedPrompt) {
     " Avoid narrations, be original, creative, knowledgeable, use your own thoughts. " .
     " Review dialogue history to focus on conversation topic and to avoid repeating sentences and phraseology from previous dialog lines.";
 }
+// --- END CACHED CONNECTOR MODIFICATION ---
 
 // Legacy commented versions preserved for reference
 // $TEMPLATE_DIALOG="write {$GLOBALS["HERIKA_NAME"]}'s next dialogue line using this format \"{$GLOBALS["HERIKA_NAME"]}: ";

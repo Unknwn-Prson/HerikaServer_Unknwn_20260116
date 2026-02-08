@@ -1,7 +1,26 @@
-CHIM Cached Connector v1.5.10 - Release Notes
+CHIM Cached Connector v1.5.11 - Release Notes
 ==============================================
-Release Date: 2026-02-07
+Release Date: 2026-02-08
 Compatible with: CHIM 2.3.3+ (synced with upstream 2026-02-06)
+
+CHANGES IN v1.5.11
+------------------
+
+1. FIX: Minimize quality prompt not working
+   - Root cause: prompts/dialogue_prompt.php was never included in distribution
+   - Users had old version without the minimize_quality_prompt feature
+   - Now includes modified dialogue_prompt.php in distribution
+   - Added BEGIN/END CACHED CONNECTOR MODIFICATION markers for clarity
+
+2. FIX: Added 'usage' parameter to streaming payload
+   - Standard connector includes "usage": {"include": true}
+   - May improve compatibility with some models
+
+3. STILL INVESTIGATING: Palmyra not working with "None" caching
+   - v1.5.10 fixes (no reasoning, transforms, stop) didn't resolve
+   - Need to compare actual payloads between connectors for debugging
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.10
 ------------------
