@@ -1,8 +1,8 @@
-CHIM Cached Connector v1.5.10 - Package Contents
+CHIM Cached Connector v1.5.12 - Package Contents
 =================================================
 
 Compatible with: CHIM 2.3.3+
-Release Date: 2026-02-07
+Release Date: 2026-02-10
 
 PACKAGE STRUCTURE
 -----------------
@@ -10,8 +10,8 @@ PACKAGE STRUCTURE
 CORE FILES (Required - Minimum for connector to function):
 - conf/conf_schema.json              - Connector registration
 - lib/core/llm_connector.class.php   - Connector instantiation
-- ui/core/llm_connectors.php         - Configuration UI (v1.5.10)
-- connector/openrouterjsoncached.php - Main connector (v1.5.10)
+- ui/core/llm_connectors.php         - Configuration UI (v1.5.12)
+- connector/openrouterjsoncached.php - Main connector (v1.5.12)
 - connector/openrouterjsoncached_helpers.php - Helper functions
 
 UPSTREAM OVERWRITES (Replace upstream files - marked with BEGIN/END comments):
