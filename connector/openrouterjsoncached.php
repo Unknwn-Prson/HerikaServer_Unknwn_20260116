@@ -9,7 +9,7 @@ require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_function
 class openrouterjsoncached
 {
     // Version tracking - update after making changes
-    const VERSION = 'OpenRouter Cache Connector v1.5.11 for CHIM 2.3.3+ | 2026/02/08';
+    const VERSION = 'OpenRouter Cache Connector v1.5.12 for CHIM 2.3.3+ | 2026/02/10';
     public $primary_handler;
     public $name;
 
@@ -968,7 +968,13 @@ class openrouterjsoncached
         try {
             $this->primary_handler = $this->send($this->_url, $context);
         } catch (Exception $e) {
-            logMessage("fopen Exception [{$this->name}:{$herikaName}]: " . $e->getMessage());
+            $errMsg = $e->getMessage();
+            logMessage("fopen Exception [{$this->name}:{$herikaName}]: {$errMsg}");
+            Logger::error("[{$this->name}] fopen Exception: {$errMsg}");
+            // Log to output_from_llm.log for visibility
+            @file_put_contents(__DIR__ . "/../log/output_from_llm.log",
+                "\n== " . date(DATE_ATOM) . " EXCEPTION [{$this->name}:{$herikaName}] ==\nfopen Exception: {$errMsg}\n",
+                FILE_APPEND | LOCK_EX);
             return null;
         }
 
@@ -976,9 +982,47 @@ class openrouterjsoncached
             $error = error_get_last();
             $errMsg = isset($error['message']) ? $error['message'] : 'fopen returned false';
             logMessage("Stream Open Fail [{$this->name}:{$herikaName}]: {$errMsg}");
+            Logger::error("[{$this->name}] Stream Open Fail: {$errMsg}");
             if (isset($http_response_header) && is_array($http_response_header)) {
                 logMessage("HTTP Headers on fail: " . implode("\n", $http_response_header));
             }
+            // Log to output_from_llm.log for visibility
+            @file_put_contents(__DIR__ . "/../log/output_from_llm.log",
+                "\n== " . date(DATE_ATOM) . " ERROR [{$this->name}:{$herikaName}] ==\nStream Open Fail: {$errMsg}\n",
+                FILE_APPEND | LOCK_EX);
+            return null;
+        }
+
+        // Check HTTP status code - OpenRouter returns errors with 4xx/5xx status codes
+        $status_code = $this->getHttpStatusCode();
+        if ($status_code >= 300) {
+            $response = stream_get_contents($this->primary_handler);
+            $error_message = "OpenRouter request failed with status {$status_code}.\nModel: {$this->_model}\nResponse: {$response}";
+
+            logMessage("HTTP Error [{$this->name}:{$herikaName}]: {$error_message}");
+            Logger::error("[{$this->name}] {$error_message}");
+
+            // Log to output_from_llm.log for visibility
+            @file_put_contents(__DIR__ . "/../log/output_from_llm.log",
+                "\n== " . date(DATE_ATOM) . " ERROR [{$this->name}:{$herikaName}] ==\n{$error_message}\n",
+                FILE_APPEND | LOCK_EX);
+
+            // Also log to audit_request table if available
+            if (isset($GLOBALS["db"]) && $GLOBALS["db"]) {
+                try {
+                    $GLOBALS["db"]->insert('audit_request', array(
+                        'request' => $this->_dataSent ?? 'unknown',
+                        'result' => $error_message,
+                        'connector' => $this->name,
+                        'url' => $this->_url
+                    ));
+                } catch (Exception $e) {
+                    logMessage("Could not log to audit_request: " . $e->getMessage());
+                }
+            }
+
+            fclose($this->primary_handler);
+            $this->primary_handler = null;
             return null;
         }
 
@@ -1045,7 +1089,12 @@ class openrouterjsoncached
                 $error = error_get_last();
                 $errMsg = isset($error['message']) ? $error['message'] : 'fgets error';
                 logMessage("Read Err [{$this->name}:{$herikaName}]: {$errMsg}");
+                Logger::error("[{$this->name}] Read Error: {$errMsg}");
                 $this->_rawbuffer .= "\nRead Err: {$errMsg}\n";
+                // Log to output_from_llm.log for visibility
+                @file_put_contents(__DIR__ . "/../log/output_from_llm.log",
+                    "\n== " . date(DATE_ATOM) . " READ ERROR [{$this->name}:{$herikaName}] ==\n{$errMsg}\n",
+                    FILE_APPEND | LOCK_EX);
                 $this->_forcedClose = true;
                 return $errMsg;
             }
@@ -1149,7 +1198,13 @@ class openrouterjsoncached
                             case 'error':
                                 $eM = print_r((isset($data['error']) ? $data['error'] : $data), true);
                                 logMessage("Stream Err (Anthropic): {$eM}");
+                                Logger::error("[{$this->name}] Stream Error (Anthropic): {$eM}");
                                 $this->_rawbuffer .= "\nErr (Anthropic):{$eM}\n";
+                                $this->_buffer .= "\n[ERROR: {$eM}]";
+                                // Log to output_from_llm.log for visibility
+                                @file_put_contents(__DIR__ . "/../log/output_from_llm.log",
+                                    "\n== " . date(DATE_ATOM) . " STREAM ERROR [{$this->name}:{$herikaName}] ==\n{$eM}\n",
+                                    FILE_APPEND | LOCK_EX);
                                 $this->_forcedClose = true;
                                 return $eM;
 
@@ -1191,11 +1246,17 @@ class openrouterjsoncached
 
                         $this->_lastStreamedObject = $data;
                     }
-                    // Generic error
+                    // Generic error (OpenRouter error response in stream)
                     elseif (isset($data['error'])) {
                         $eM = print_r($data['error'], true);
                         logMessage("Stream Err (Generic): {$eM}");
+                        Logger::error("[{$this->name}] Stream Error: {$eM}");
                         $this->_rawbuffer .= "\nErr (Generic):{$eM}\n";
+                        $this->_buffer .= "\n[ERROR: {$eM}]";
+                        // Log to output_from_llm.log for visibility
+                        @file_put_contents(__DIR__ . "/../log/output_from_llm.log",
+                            "\n== " . date(DATE_ATOM) . " STREAM ERROR [{$this->name}:{$herikaName}] ==\n{$eM}\n",
+                            FILE_APPEND | LOCK_EX);
                         $this->_forcedClose = true;
                         return $eM;
                     }

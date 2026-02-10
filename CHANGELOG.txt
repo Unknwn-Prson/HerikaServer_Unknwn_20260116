@@ -1,7 +1,27 @@
-CHIM Cached Connector v1.5.11 - Release Notes
+CHIM Cached Connector v1.5.12 - Release Notes
 ==============================================
-Release Date: 2026-02-08
+Release Date: 2026-02-10
 Compatible with: CHIM 2.3.3+ (synced with upstream 2026-02-06)
+
+CHANGES IN v1.5.12
+------------------
+
+1. FIX: OpenRouter error messages now visible in output_from_llm.log
+   - HTTP status code errors (4xx/5xx) are now logged to output_from_llm.log
+   - Stream errors (rate limits, model errors, etc.) now logged to output_from_llm.log
+   - Also logs to Apache error log via Logger::error() for visibility
+   - Also logs to audit_request table when database is available
+   - Errors now also appear in the _buffer so they show in AI Responses tab
+
+2. Improved error visibility at all failure points:
+   - fopen exceptions
+   - Stream open failures
+   - HTTP error status codes (checked immediately after stream opens)
+   - Read errors during streaming
+   - Anthropic format error events
+   - Generic error responses in stream data
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.11
 ------------------
