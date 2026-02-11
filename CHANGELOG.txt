@@ -1,7 +1,18 @@
-CHIM Cached Connector v1.5.14 - Release Notes
+CHIM Cached Connector v1.5.15 - Release Notes
 ==============================================
 Release Date: 2026-02-11
 Compatible with: CHIM 2.3.3+ (synced with upstream 2026-02-06)
+
+CHANGES IN v1.5.15
+------------------
+
+1. FIX: Mood and action lists now included in simple format prompts
+   - Added default mood list (50 moods) as fallback when EMOTEMOODS not set
+   - Now includes "Valid moods: ..." in simple format instruction
+   - Now includes "Valid actions: ..." when actions are enabled and FUNC_LIST exists
+   - Matches JSON format behavior for mood/action guidance
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.14
 ------------------

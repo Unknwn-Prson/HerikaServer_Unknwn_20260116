@@ -496,8 +496,25 @@ function buildSimpleFormatInstruction($includeMood, $includeListener, $includeAc
     $instruction .= implode(", ", $descriptions);
     $instruction .= " in parentheses like this: {$formatExample}, then provide your dialogue. ";
 
-    if ($includeMood && isset($GLOBALS["EMOTEMOODS"]) && !empty($GLOBALS["EMOTEMOODS"])) {
-        $instruction .= "Valid moods: " . $GLOBALS["EMOTEMOODS"] . ". ";
+    // Add mood list - use EMOTEMOODS if set, otherwise use default list
+    if ($includeMood) {
+        if (isset($GLOBALS["EMOTEMOODS"]) && !empty($GLOBALS["EMOTEMOODS"])) {
+            $moodList = $GLOBALS["EMOTEMOODS"];
+        } else {
+            // Default mood list matching common Skyrim animation moods
+            $moodList = "admiring,affectionate,agonized,amused,angry,annoyed,anxious,apologetic,arrogant,aroused," .
+                "ashamed,bitter,bored,cautious,compassionate,confident,confused,contemptuous,curious,determined," .
+                "disappointed,disgusted,drunk,embarrassed,euphoric,exasperated,excited,formal,frustrated,happy," .
+                "hopeful,impatient,jealous,manic,neutral,playful,pleading,proud,relieved,sad,sarcastic,scared," .
+                "seductive,serious,skeptical,solemn,surprised,timid,tired,wistful";
+        }
+        $instruction .= "Valid moods: " . $moodList . ". ";
+    }
+
+    // Add action list if enabled
+    if ($includeActions && isset($GLOBALS["FUNC_LIST"]) && !empty($GLOBALS["FUNC_LIST"])) {
+        $actionList = is_array($GLOBALS["FUNC_LIST"]) ? implode(",", $GLOBALS["FUNC_LIST"]) : $GLOBALS["FUNC_LIST"];
+        $instruction .= "Valid actions: " . $actionList . ". ";
     }
 
     $exampleParts = [];
