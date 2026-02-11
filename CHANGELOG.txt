@@ -1,7 +1,22 @@
-CHIM Cached Connector v1.5.15 - Release Notes
+CHIM Cached Connector v1.5.16 - Release Notes
 ==============================================
 Release Date: 2026-02-11
 Compatible with: CHIM 2.3.3+ (synced with upstream 2026-02-06)
+
+CHANGES IN v1.5.16
+------------------
+
+1. FIX: JSON format responses now properly returned to game
+   - Bug: JSON format messages were accumulated but never returned at stream end
+   - Root cause: Stream end handlers only flushed content for 'simple' format
+   - Fix: Added _parseAndReturnContent() call for 'json' format at all stream end points:
+     - [DONE] marker
+     - finish_reason (OpenAI format)
+     - message_delta with stop_reason (Anthropic format)
+     - message_stop event (Anthropic format)
+     - "event: message_stop" line
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.15
 ------------------

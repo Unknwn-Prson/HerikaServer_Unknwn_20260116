@@ -9,7 +9,7 @@ require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_function
 class openrouterjsoncached
 {
     // Version tracking - update after making changes
-    const VERSION = 'OpenRouter Cache Connector v1.5.15 for CHIM 2.3.3+ | 2026/02/11';
+    const VERSION = 'OpenRouter Cache Connector v1.5.16 for CHIM 2.3.3+ | 2026/02/11';
     public $primary_handler;
     public $name;
 
@@ -1120,6 +1120,12 @@ class openrouterjsoncached
                     if (!empty($flushed)) {
                         return $flushed;
                     }
+                } elseif ($this->_responseFormat === 'json') {
+                    // JSON format: parse and return the complete JSON message
+                    $result = $this->_parseAndReturnContent();
+                    if (!empty($result)) {
+                        return $result;
+                    }
                 }
                 return "";
             }
@@ -1154,6 +1160,13 @@ class openrouterjsoncached
                                         if (!empty($flushed)) {
                                             $this->_forcedClose = true;
                                             return $flushed;
+                                        }
+                                    } elseif ($this->_responseFormat === 'json') {
+                                        // JSON format: parse and return the complete JSON message
+                                        $this->_forcedClose = true;
+                                        $result = $this->_parseAndReturnContent();
+                                        if (!empty($result)) {
+                                            return $result;
                                         }
                                     }
 
@@ -1192,6 +1205,13 @@ class openrouterjsoncached
                                     if (!empty($flushed)) {
                                         $this->_forcedClose = true;
                                         return $flushed;
+                                    }
+                                } elseif ($this->_responseFormat === 'json') {
+                                    // JSON format: parse and return the complete JSON message
+                                    $this->_forcedClose = true;
+                                    $result = $this->_parseAndReturnContent();
+                                    if (!empty($result)) {
+                                        return $result;
                                     }
                                 }
 
@@ -1242,6 +1262,13 @@ class openrouterjsoncached
                                     $this->_forcedClose = true;
                                     return $flushed;
                                 }
+                            } elseif ($this->_responseFormat === 'json') {
+                                // JSON format: parse and return the complete JSON message
+                                $this->_forcedClose = true;
+                                $result = $this->_parseAndReturnContent();
+                                if (!empty($result)) {
+                                    return $result;
+                                }
                             }
 
                             $this->_forcedClose = true;
@@ -1276,6 +1303,13 @@ class openrouterjsoncached
                 if (!empty($flushed)) {
                     $this->_forcedClose = true;
                     return $flushed;
+                }
+            } elseif ($this->_responseFormat === 'json') {
+                // JSON format: parse and return the complete JSON message
+                $this->_forcedClose = true;
+                $result = $this->_parseAndReturnContent();
+                if (!empty($result)) {
+                    return $result;
                 }
             }
 
