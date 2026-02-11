@@ -9,7 +9,7 @@ require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_function
 class openrouterjsoncached
 {
     // Version tracking - update after making changes
-    const VERSION = 'OpenRouter Cache Connector v1.5.13 for CHIM 2.3.3+ | 2026/02/11';
+    const VERSION = 'OpenRouter Cache Connector v1.5.14 for CHIM 2.3.3+ | 2026/02/11';
     public $primary_handler;
     public $name;
 
@@ -802,10 +802,11 @@ class openrouterjsoncached
             $reasoning["max_tokens"] = intval($thinkingTokens);
         }
 
-        // Convert messages to simple string format for non-Anthropic providers
+        // Convert messages to simple string format for OpenAI provider only
         // Anthropic uses: {"role": "...", "content": [{"type": "text", "text": "..."}]}
-        // OpenAI/Others use: {"role": "...", "content": "..."}
-        if ($this->_provider_caching === "OpenAI" || $this->_provider_caching === "None") {
+        // OpenAI uses: {"role": "...", "content": "..."}
+        // "None" mode keeps array structure (works via OpenRouter transformation)
+        if ($this->_provider_caching === "OpenAI") {
             $finalMessagesToSend = $this->_convertToSimpleContentFormat($finalMessagesToSend);
             logMessage("[{$this->name}] Converted messages to simple content format for provider: {$this->_provider_caching}");
         }

@@ -1,7 +1,18 @@
-CHIM Cached Connector v1.5.13 - Release Notes
+CHIM Cached Connector v1.5.14 - Release Notes
 ==============================================
 Release Date: 2026-02-11
 Compatible with: CHIM 2.3.3+ (synced with upstream 2026-02-06)
+
+CHANGES IN v1.5.14
+------------------
+
+1. Restore array content structure for "None" caching mode
+   - "None" mode now keeps Anthropic-style content arrays
+   - Only "OpenAI" mode converts to simple string format
+   - OpenRouter handles the transformation for generic providers
+   - The real fix for Palmyra was removing the prefill (v1.5.13)
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.13
 ------------------
