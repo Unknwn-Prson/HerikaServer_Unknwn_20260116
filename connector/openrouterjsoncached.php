@@ -9,7 +9,7 @@ require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_function
 class openrouterjsoncached
 {
     // Version tracking - update after making changes
-    const VERSION = 'OpenRouter Cache Connector v1.5.12 for CHIM 2.3.3+ | 2026/02/10';
+    const VERSION = 'OpenRouter Cache Connector v1.5.13 for CHIM 2.3.3+ | 2026/02/11';
     public $primary_handler;
     public $name;
 
@@ -761,7 +761,9 @@ class openrouterjsoncached
         logMessage("Estimated token count: $tokenCount");
 
         // Handle prefill for simple format (incompatible with reasoning)
-        if ($this->_responseFormat === 'simple' && !$toggleThinking) {
+        // Skip prefill for "None" caching mode - some providers (like Palmyra/Bedrock)
+        // require the last message to be a user message
+        if ($this->_responseFormat === 'simple' && !$toggleThinking && $this->_provider_caching !== "None") {
             $finalMessagesToSend[] = array('role' => 'user', 'content' => $completeEventList);
             $prefillText = '(';
             $finalMessagesToSend[] = array('role' => 'assistant', 'content' => array(

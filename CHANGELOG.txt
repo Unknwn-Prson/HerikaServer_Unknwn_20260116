@@ -1,7 +1,18 @@
-CHIM Cached Connector v1.5.12 - Release Notes
+CHIM Cached Connector v1.5.13 - Release Notes
 ==============================================
-Release Date: 2026-02-10
+Release Date: 2026-02-11
 Compatible with: CHIM 2.3.3+ (synced with upstream 2026-02-06)
+
+CHANGES IN v1.5.13
+------------------
+
+1. FIX: Palmyra and other Bedrock models now work with "None" caching mode
+   - Root cause: Assistant prefill message `(` caused "last message must be user" error
+   - Error was: "The model requires the last turn to be a user message"
+   - Fix: Skip assistant prefill for "None" caching mode
+   - Cache_control blocks were already being skipped for "None" mode
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.12
 ------------------
