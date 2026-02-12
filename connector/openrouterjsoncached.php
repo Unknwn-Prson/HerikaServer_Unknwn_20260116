@@ -4,12 +4,12 @@ $enginePath = dirname((__FILE__)) . DIRECTORY_SEPARATOR."..".DIRECTORY_SEPARATOR
 require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_functions.php");
 
 // Cached version of openrouterjson connector with Anthropic/OpenAI/Gemini cache support
-// Based on CHIM 2.2/2.3.3 architecture with additional caching and response format features
+// Based on CHIM 2.4.3 architecture with additional caching and response format features
 
 class openrouterjsoncached
 {
     // Version tracking - update after making changes
-    const VERSION = 'OpenRouter Cache Connector v1.5.16 for CHIM 2.3.3+ | 2026/02/11';
+    const VERSION = 'OpenRouter Cache Connector v1.6.0 for CHIM 2.4.3+ | 2026/02/12';
     public $primary_handler;
     public $name;
 
@@ -833,6 +833,21 @@ class openrouterjsoncached
         // Don't add for "None" mode (generic models like Palmyra don't support it)
         if ($this->_provider_caching !== "None") {
             $data['reasoning'] = $reasoning;
+
+            // Handle models that cannot disable reasoning (CHIM 2.4.3)
+            if (stripos($this->_model, "grok-3-mini") !== false) {
+                // grok-3-mini needs reasoning and cannot be disabled
+                $data["reasoning"]["enabled"] = true;
+            } elseif (stripos($this->_model, "qwen3-235b-a22b-thinking-2507") !== false) {
+                // qwen/qwen3-235b-a22b-thinking-2507 needs reasoning and cannot be disabled
+                $data["reasoning"]["enabled"] = true;
+            } elseif ($this->_model == "x-ai/grok-4") {
+                // grok-4 needs reasoning and cannot be disabled
+                $data["reasoning"]["enabled"] = true;
+            } elseif ($this->_model == "google/gemini-3-pro-preview") {
+                // gemini-3-pro-preview needs reasoning with low effort
+                $data["reasoning"] = array('exclude' => true, 'enabled' => true, 'effort' => 'low');
+            }
         }
 
         // Handle max tokens
@@ -872,6 +887,26 @@ class openrouterjsoncached
         }
 
         $data["transforms"] = array();
+
+        // Add extra_parameters support (CHIM 2.4.3)
+        if (isset($GLOBALS["CONNECTOR"][$this->name]["extra_parameters"]) && is_array($GLOBALS["CONNECTOR"][$this->name]["extra_parameters"])) {
+            foreach ($GLOBALS["CONNECTOR"][$this->name]["extra_parameters"] as $k => $v) {
+                $data[$k] = $v;
+            }
+        }
+
+        // Add Google safety settings if block_none is enabled in metadata (for Google models via OpenRouter)
+        if (isset($GLOBALS["CONNECTOR"][$this->name]["block_none"]) && $GLOBALS["CONNECTOR"][$this->name]["block_none"]) {
+            // Only add safety settings if this is a Google/Gemini model
+            if (preg_match('/google|gemini/i', $this->_model)) {
+                $data["safety_settings"] = [
+                    ["category" => "HARM_CATEGORY_HARASSMENT", "threshold" => "BLOCK_NONE"],
+                    ["category" => "HARM_CATEGORY_HATE_SPEECH", "threshold" => "BLOCK_NONE"],
+                    ["category" => "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold" => "BLOCK_NONE"],
+                    ["category" => "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold" => "BLOCK_NONE"]
+                ];
+            }
+        }
 
         // Handle OpenAI reasoning models - special parameter handling
         if ($isOpenAIReasoning) {
@@ -2072,12 +2107,42 @@ class openrouterjsoncached
             $data["stop"] = $GLOBALS["CONNECTOR"][$this->name]["stop"];
         }
 
-        // Handle reasoning models
+        // Handle reasoning models (CHIM 2.4.3 improved handling)
         if ($this->_is_reasoning) {
-            $data["reasoning"] = array('exclude' => true, 'enabled' => false);
+            // Default: disable reasoning for faster responses
+            if ($this->_disable_reasoning) {
+                $data["reasoning"] = array('exclude' => true, 'enabled' => false);
+            } else {
+                $data["reasoning"] = array('exclude' => true, 'enabled' => true);
+            }
+
+            // Model-specific handling
             if (stripos($this->_model, "qwen3-") !== false) {
                 $data["enable_thinking"] = false;
+            } elseif (stripos($this->_model, "grok-3-mini") !== false) {
+                // grok-3-mini needs reasoning and cannot be disabled
+                $data["reasoning"]["enabled"] = true;
+            } elseif (stripos($this->_model, "qwen3-235b-a22b-thinking-2507") !== false) {
+                // qwen/qwen3-235b-a22b-thinking-2507 needs reasoning and cannot be disabled
+                $data["reasoning"]["enabled"] = true;
+            } elseif ($this->_model == "x-ai/grok-4") {
+                // grok-4 needs reasoning and cannot be disabled
+                $data["reasoning"]["enabled"] = true;
+            } elseif ($this->_model == "google/gemini-3-pro-preview") {
+                // gemini-3-pro-preview needs reasoning with low effort
+                $data["reasoning"] = array('exclude' => true, 'enabled' => true, 'effort' => 'low');
             }
+        }
+
+        // Handle Mistral AI models (no penalty params)
+        if ($this->_is_mistral_ai) {
+            unset($data["presence_penalty"]);
+            unset($data["frequency_penalty"]);
+        }
+
+        // Handle Grok models (no stop param)
+        if ($this->_is_grok) {
+            unset($data["stop"]);
         }
 
         // Handle OpenAI models
@@ -2087,11 +2152,6 @@ class openrouterjsoncached
             if ($this->_is_reasoning) {
                 $data["reasoning"] = array('exclude' => true, 'effort' => 'low');
             }
-        }
-
-        // Handle Grok models (no stop param)
-        if ($this->_is_grok) {
-            unset($data["stop"]);
         }
 
         // Handle max_tokens edge cases
@@ -2112,6 +2172,26 @@ class openrouterjsoncached
         }
 
         $data["transforms"] = [];
+
+        // Add extra_parameters support (CHIM 2.4.3)
+        if (isset($GLOBALS["CONNECTOR"][$this->name]["extra_parameters"]) && is_array($GLOBALS["CONNECTOR"][$this->name]["extra_parameters"])) {
+            foreach ($GLOBALS["CONNECTOR"][$this->name]["extra_parameters"] as $k => $v) {
+                $data[$k] = $v;
+            }
+        }
+
+        // Add Google safety settings if block_none is enabled in metadata (for Google models via OpenRouter)
+        if (isset($GLOBALS["CONNECTOR"][$this->name]["block_none"]) && $GLOBALS["CONNECTOR"][$this->name]["block_none"]) {
+            // Only add safety settings if this is a Google/Gemini model
+            if (preg_match('/google|gemini/i', $this->_model)) {
+                $data["safety_settings"] = [
+                    ["category" => "HARM_CATEGORY_HARASSMENT", "threshold" => "BLOCK_NONE"],
+                    ["category" => "HARM_CATEGORY_HATE_SPEECH", "threshold" => "BLOCK_NONE"],
+                    ["category" => "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold" => "BLOCK_NONE"],
+                    ["category" => "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold" => "BLOCK_NONE"]
+                ];
+            }
+        }
 
         $GLOBALS["DEBUG_DATA"]["full"] = $data;
 
