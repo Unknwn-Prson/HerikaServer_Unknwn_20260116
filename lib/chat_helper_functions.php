@@ -8,7 +8,6 @@ define("_MAX_SUBTITLE_LENGTH", 1000);
 
 require_once(__DIR__."/online_translation.php");
 require_once(__DIR__."/utils_game_timestamp.php");
-require_once(__DIR__."/pipeline_status.php");
 
 function randomReplaceShortWordsWithPoints($inputString, $distance)
 {
