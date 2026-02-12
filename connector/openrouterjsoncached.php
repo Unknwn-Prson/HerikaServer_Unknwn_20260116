@@ -833,21 +833,6 @@ class openrouterjsoncached
         // Don't add for "None" mode (generic models like Palmyra don't support it)
         if ($this->_provider_caching !== "None") {
             $data['reasoning'] = $reasoning;
-
-            // Handle models that cannot disable reasoning (CHIM 2.4.3)
-            if (stripos($this->_model, "grok-3-mini") !== false) {
-                // grok-3-mini needs reasoning and cannot be disabled
-                $data["reasoning"]["enabled"] = true;
-            } elseif (stripos($this->_model, "qwen3-235b-a22b-thinking-2507") !== false) {
-                // qwen/qwen3-235b-a22b-thinking-2507 needs reasoning and cannot be disabled
-                $data["reasoning"]["enabled"] = true;
-            } elseif ($this->_model == "x-ai/grok-4") {
-                // grok-4 needs reasoning and cannot be disabled
-                $data["reasoning"]["enabled"] = true;
-            } elseif ($this->_model == "google/gemini-3-pro-preview") {
-                // gemini-3-pro-preview needs reasoning with low effort
-                $data["reasoning"] = array('exclude' => true, 'enabled' => true, 'effort' => 'low');
-            }
         }
 
         // Handle max tokens
@@ -2107,42 +2092,12 @@ class openrouterjsoncached
             $data["stop"] = $GLOBALS["CONNECTOR"][$this->name]["stop"];
         }
 
-        // Handle reasoning models (CHIM 2.4.3 improved handling)
+        // Handle reasoning models
         if ($this->_is_reasoning) {
-            // Default: disable reasoning for faster responses
-            if ($this->_disable_reasoning) {
-                $data["reasoning"] = array('exclude' => true, 'enabled' => false);
-            } else {
-                $data["reasoning"] = array('exclude' => true, 'enabled' => true);
-            }
-
-            // Model-specific handling
+            $data["reasoning"] = array('exclude' => true, 'enabled' => false);
             if (stripos($this->_model, "qwen3-") !== false) {
                 $data["enable_thinking"] = false;
-            } elseif (stripos($this->_model, "grok-3-mini") !== false) {
-                // grok-3-mini needs reasoning and cannot be disabled
-                $data["reasoning"]["enabled"] = true;
-            } elseif (stripos($this->_model, "qwen3-235b-a22b-thinking-2507") !== false) {
-                // qwen/qwen3-235b-a22b-thinking-2507 needs reasoning and cannot be disabled
-                $data["reasoning"]["enabled"] = true;
-            } elseif ($this->_model == "x-ai/grok-4") {
-                // grok-4 needs reasoning and cannot be disabled
-                $data["reasoning"]["enabled"] = true;
-            } elseif ($this->_model == "google/gemini-3-pro-preview") {
-                // gemini-3-pro-preview needs reasoning with low effort
-                $data["reasoning"] = array('exclude' => true, 'enabled' => true, 'effort' => 'low');
             }
-        }
-
-        // Handle Mistral AI models (no penalty params)
-        if ($this->_is_mistral_ai) {
-            unset($data["presence_penalty"]);
-            unset($data["frequency_penalty"]);
-        }
-
-        // Handle Grok models (no stop param)
-        if ($this->_is_grok) {
-            unset($data["stop"]);
         }
 
         // Handle OpenAI models
@@ -2152,6 +2107,11 @@ class openrouterjsoncached
             if ($this->_is_reasoning) {
                 $data["reasoning"] = array('exclude' => true, 'effort' => 'low');
             }
+        }
+
+        // Handle Grok models (no stop param)
+        if ($this->_is_grok) {
+            unset($data["stop"]);
         }
 
         // Handle max_tokens edge cases
