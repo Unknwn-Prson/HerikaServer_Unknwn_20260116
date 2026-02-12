@@ -8,6 +8,7 @@ define("_MAX_SUBTITLE_LENGTH", 1000);
 
 require_once(__DIR__."/online_translation.php");
 require_once(__DIR__."/utils_game_timestamp.php");
+require_once(__DIR__."/pipeline_status.php");
 
 function randomReplaceShortWordsWithPoints($inputString, $distance)
 {
@@ -58,6 +59,8 @@ function cleanResponse($rawResponse)
         $ttsMap = [
             'melotts' => 'MELOTTS',
             'xtts-fastapi' => 'XTTSFASTAPI',
+            'chatterbox' => 'CHATTERBOX',
+            'pockettts' => 'POCKETTTS',
             'mimic3' => 'MIMIC3',
             'xvasynth' => 'XVASYNTH',
             'azure' => 'AZURE',
@@ -475,6 +478,8 @@ function loadNarratorVoiceSettings() {
 
     // Apply Narrator voice to all TTS providers
     $GLOBALS['TTS']['XTTSFASTAPI']['voiceid']  = $voiceid;
+    $GLOBALS['TTS']['CHATTERBOX']['voiceid']   = $voiceid;
+    $GLOBALS['TTS']['POCKETTTS']['voiceid']    = $voiceid;
     $GLOBALS['TTS']['MELOTTS']['voiceid']      = $voiceid;
     $GLOBALS['TTS']['MIMIC3']['voice']         = $voiceid;
     $GLOBALS['TTS']['XVASYNTH']['model']       = $voiceid;

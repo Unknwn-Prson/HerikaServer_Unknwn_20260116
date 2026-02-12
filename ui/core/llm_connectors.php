@@ -10,7 +10,48 @@ require_once($enginePath . "lib/data_functions.php");
 require_once($enginePath . "lib/logger.php");
 require_once("{$enginePath}/lib/core/llm_connector.class.php");
 
-//function renderSelect($obj, $fieldName, $labelText, $selectedValue = "") 
+// Helper function to convert nested arrays to YAML format
+function array_to_yaml($arr, $indent = 0) {
+    $yaml = '';
+    $prefix = str_repeat('  ', $indent);
+    foreach ($arr as $k => $v) {
+        if (is_array($v)) {
+            // Check if this is a simple list (indexed array with no gaps)
+            if (array_keys($v) === range(0, count($v) - 1)) {
+                // Format as inline list
+                $items = array();
+                foreach ($v as $item) {
+                    if (is_bool($item)) {
+                        $items[] = $item ? 'true' : 'false';
+                    } elseif (is_string($item)) {
+                        // Always quote strings to preserve them
+                        $items[] = '"' . addslashes($item) . '"';
+                    } else {
+                        $items[] = $item;
+                    }
+                }
+                $yaml .= $prefix . $k . ': [' . implode(', ', $items) . "]\n";
+            } else {
+                // Format as nested object
+                $yaml .= $prefix . $k . ":\n";
+                $yaml .= array_to_yaml($v, $indent + 1);
+            }
+        } else {
+            if (is_bool($v)) {
+                $val = $v ? 'true' : 'false';
+            } elseif (is_string($v)) {
+                // Quote string values to preserve them
+                $val = '"' . addslashes($v) . '"';
+            } else {
+                $val = $v;
+            }
+            $yaml .= $prefix . $k . ': ' . $val . "\n";
+        }
+    }
+    return $yaml;
+}
+
+//function renderSelect($obj, $fieldName, $labelText, $selectedValue = "")
 //function include from bewlow file
 include(__DIR__."/tmpl/ui_utils.php");
 
