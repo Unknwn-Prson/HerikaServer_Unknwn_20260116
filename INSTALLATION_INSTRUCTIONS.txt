@@ -1,5 +1,5 @@
-CHIM Cached Connector v1.5.5 - Installation Instructions
-========================================================
+CHIM Cached Connector v1.6.0b - Installation Instructions
+=========================================================
 
 IMPORTANT: READ BEFORE INSTALLING
 ----------------------------------
@@ -7,11 +7,11 @@ This connector provides advanced caching, thinking/reasoning support,
 flexible quality instruction control, and true sentence-by-sentence
 streaming for simple format.
 
-v1.5.5 is compatible with CHIM 2.3.3.
+v1.6.0b is compatible with CHIM 2.4.3+.
 
 REQUIREMENTS
 ------------
-- CHIM 2.3.3 or compatible version
+- CHIM 2.4.3 or compatible version
 - PHP 7.4 or higher
 - OpenRouter, Anthropic, OpenAI, or Gemini API access
 - Write permissions to CHIM installation directory
@@ -37,31 +37,31 @@ INSTALLATION STEPS
    lib/core/llm_connector.class.php
    ui/core/llm_connectors.php
 
-3. INSTALL NEW FILES (Safe - no overwrites)
-   These files are added alongside existing files:
-
-   lib/reasoning_helpers.php
-   ext/cached_connector/dialogue_prompt.php
-
-   NOTE: You may need to create the ext/cached_connector/ directory.
-
-4. INSTALL UPSTREAM OVERWRITES (Review first)
-   These replace CHIM 2.3.3 upstream files. All modifications are
+3. INSTALL UPSTREAM OVERWRITES (Review first)
+   These replace upstream CHIM 2.4.3 files. All modifications are
    clearly marked with BEGIN/END CACHED CONNECTOR comments.
 
    lib/data_functions.php
    lib/chat_helper_functions.php
+   prompts/dialogue_prompt.php
+   ui/global_settings.php          (NEW in v1.6.0b)
 
    If you have custom modifications to these files, review the
    marked sections and merge manually.
 
-5. VERIFY INSTALLATION
+   NOTE on ui/global_settings.php:
+   - Contains a fix for the settings save error suppression bug
+     (upstream CHIM bug where @file_put_contents silently fails)
+   - Contains compatibility filter preventing cached connector from
+     being assigned to incompatible CORE_CONNECTOR types
+
+4. VERIFY INSTALLATION
    - Access CHIM web interface
    - Navigate to LLM Connectors configuration
    - Create or edit a connector
    - Select "openrouterjsoncached" from the Driver dropdown
    - Verify caching settings section appears
-   - Version should display as v1.5.5
+   - Version should display as v1.6.0
 
 6. CONFIGURE CONNECTOR
    a. Basic Settings:
@@ -80,7 +80,7 @@ INSTALLATION STEPS
       - Thinking Tokens: Set max tokens (default 1000)
       - Effort Level: Choose minimal/low/medium/high
 
-   d. New in v1.5.5:
+   d. Additional Settings:
       - Disable Refusal Filter: ON by default (recommended)
         Prevents false-positive response cutoffs for Gemini/Palmyra
       - Preserve Asterisk Content: OFF by default
@@ -94,24 +94,13 @@ INSTALLATION STEPS
       - Custom System Instruction: Appears before dialogue history
       - Custom Last Instruction: Appears after dialogue history
 
-UPGRADING FROM v2.0.1
----------------------
-v1.5.5 restores features that were lost when upgrading from v1.4 to v2.0.1.
-See CACHED_CONNECTOR_UPGRADE_AUDIT.md for details.
-
-New in v1.5.5:
-- Reasoning token stripping (was in v1.4, lost in v2.0.x)
-- Immediate simple-format streaming (was in v1.4, lost in v2.0.x)
-- Minimize Quality Instructions (was in v1.4, lost in v2.0.x)
-- Refusal filter bypass (new - fixes Gemini/Palmyra cutoffs)
-- Asterisk content preservation (new)
-- LOCATION_BLACKLIST upstream bug fix
-
-UPGRADING FROM v1.4
---------------------
-- Architecture changed: ext system used instead of overwriting dialogue_prompt.php
-- Reasoning functions moved to standalone lib/reasoning_helpers.php
-- Two new UI settings: Disable Refusal Filter, Preserve Asterisk Content
+UPGRADING FROM v1.5.x (CHIM 2.3.3)
+------------------------------------
+v1.6.0b is the CHIM 2.4.3 compatible version. Key changes:
+- All lib files synced with CHIM 2.4.3 upstream
+- prompts/dialogue_prompt.php now a direct overwrite (simpler install)
+- ui/global_settings.php now included (save bug fix + compatibility filter)
+- ext/cached_connector/ and lib/reasoning_helpers.php no longer needed
 - Clear cache files (*.tmp) after upgrade
 
 TROUBLESHOOTING
@@ -129,15 +118,20 @@ Solution: Ensure lib/reasoning_helpers.php is installed.
 The connector loads it automatically.
 
 Issue: "Minimize Quality Instructions" toggle not visible
-Solution: Ensure ext/cached_connector/dialogue_prompt.php is installed.
-The UI checks for the CHIM_CACHED_FEATURE marker in this file.
+Solution: Ensure prompts/dialogue_prompt.php is installed.
 
 Issue: Fatal error on pages with location data
 Solution: Ensure the modified lib/data_functions.php is installed.
-This fixes an upstream LOCATION_BLACKLIST bug in CHIM 2.3.3.
+This fixes an upstream LOCATION_BLACKLIST bug.
+
+Issue: Settings save appears to succeed but changes don't persist
+Solution: Install the modified ui/global_settings.php from this package.
+It fixes an upstream CHIM bug where @file_put_contents silently fails
+on permission errors. After installing, you'll see a red error banner
+with the exact chmod command needed.
 
 VERSION INFORMATION
 -------------------
-Package: CHIM Cached Connector v1.5.5
-Release Date: 2026-02-04
-CHIM Compatibility: 2.3.3
+Package: CHIM Cached Connector v1.6.0b
+Release Date: 2026-02-27
+CHIM Compatibility: 2.4.3+

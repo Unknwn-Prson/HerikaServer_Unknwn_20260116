@@ -1,8 +1,8 @@
-CHIM Cached Connector v1.5.16 - Package Contents
+CHIM Cached Connector v1.6.0b - Package Contents
 =================================================
 
-Compatible with: CHIM 2.3.3+
-Release Date: 2026-02-11
+Compatible with: CHIM 2.4.3+
+Release Date: 2026-02-27
 
 PACKAGE STRUCTURE
 -----------------
@@ -10,32 +10,29 @@ PACKAGE STRUCTURE
 CORE FILES (Required - Minimum for connector to function):
 - conf/conf_schema.json              - Connector registration
 - lib/core/llm_connector.class.php   - Connector instantiation
-- ui/core/llm_connectors.php         - Configuration UI (v1.5.16)
-- connector/openrouterjsoncached.php - Main connector (v1.5.16)
-- connector/openrouterjsoncached_helpers.php - Helper functions (v1.5.15)
+- ui/core/llm_connectors.php         - Configuration UI with cache management
+- connector/openrouterjsoncached.php - Main connector (v1.6.0)
+- connector/openrouterjsoncached_helpers.php - Helper functions
 
 UPSTREAM OVERWRITES (Replace upstream files - marked with BEGIN/END comments):
 - lib/data_functions.php         - handlesSentenceSplitting + LOCATION_BLACKLIST fix
 - lib/chat_helper_functions.php  - PRESERVE_ASTERISKS mode in unmoodSentence()
 - prompts/dialogue_prompt.php    - Minimize Quality Instructions feature
+- ui/global_settings.php         - Save bug fix + cached connector compatibility filter (NEW in v1.6.0b)
 
 DOCUMENTATION:
 - CHANGELOG.txt
 - PACKAGE_CONTENTS.txt (this file)
 - INSTALLATION_INSTRUCTIONS.txt
-- CACHED_CONNECTOR_UPGRADE_AUDIT.md
-- FOUND_ISSUES.md
 - connector/OPENROUTERJSONCACHED_README.md
 
 DIRECTORY STRUCTURE
 -------------------
 
-openrouterjsoncached_v1.5.5_CHIM2.3.3/
+openrouterjsoncached_v1.6.0b_CHIM2.4.3/
 ├── CHANGELOG.txt
 ├── PACKAGE_CONTENTS.txt (this file)
 ├── INSTALLATION_INSTRUCTIONS.txt
-├── CACHED_CONNECTOR_UPGRADE_AUDIT.md
-├── FOUND_ISSUES.md
 │
 ├── [CORE]
 ├── conf/
@@ -51,17 +48,14 @@ openrouterjsoncached_v1.5.5_CHIM2.3.3/
 │   └── core/
 │       └── llm_connectors.php
 │
-├── [NEW FILES]
-├── lib/
-│   └── reasoning_helpers.php
-├── ext/
-│   └── cached_connector/
-│       └── dialogue_prompt.php
-│
 └── [UPSTREAM OVERWRITES]
-    └── lib/
-        ├── data_functions.php
-        └── chat_helper_functions.php
+    ├── lib/
+    │   ├── data_functions.php
+    │   └── chat_helper_functions.php
+    ├── prompts/
+    │   └── dialogue_prompt.php
+    └── ui/
+        └── global_settings.php
 
 WHAT EACH CATEGORY MEANS
 -------------------------
@@ -112,9 +106,11 @@ FEATURE-TO-FILE MAPPING
 | LOCATION_BLACKLIST fix        | lib/data_functions.php                | Overwrite     |
 | Preserve Asterisk Content     | lib/chat_helper_functions.php         | Overwrite     |
 | Disable Refusal Filter        | connector/openrouterjsoncached.php    | Core (built-in)|
+| Save error visibility         | ui/global_settings.php                | Overwrite     |
+| Connector type compatibility  | ui/global_settings.php                | Overwrite     |
 
 VERSION INFORMATION
 -------------------
-Package: CHIM Cached Connector v1.5.5
-CHIM Compatibility: 2.3.3
-Connector Version: 1.5.0
+Package: CHIM Cached Connector v1.6.0b
+CHIM Compatibility: 2.4.3+
+Connector Version: 1.6.0

@@ -500,6 +500,7 @@ if ($hasForeign) {
 
 // Handle Save
 $saveSuccess = false;
+$saveError = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_all'])) {
 	// Reload latest configuration to avoid overwriting changes from other pages
 	$confFile = $enginePath . "conf" . DIRECTORY_SEPARATOR . "conf.php";
@@ -623,14 +624,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_all'])) {
     // Build and write buffer to default conf.php (always default profile)
     $buffer = build_conf_php_from_pairs($allPairs, $confSchema);
     $target = $enginePath . "conf" . DIRECTORY_SEPARATOR . "conf.php";
-	$tmpTarget = $target . '.tmp.' . getmypid() . '.' . str_replace('.', '_', (string)microtime(true));
-	$result = @file_put_contents($tmpTarget, $buffer, LOCK_EX);
-    $saveSuccess = $result !== false;
-    if ($saveSuccess) {
-		$moved = @rename($tmpTarget, $target);
-		if (!$moved) { $moved = (@copy($tmpTarget, $target) && @unlink($tmpTarget)); }
-		$saveSuccess = $moved;
-	}
+    $confDir = dirname($target);
+
+    // Pre-check write access to surface a useful error instead of silently failing
+    if (!file_exists($target) && !is_writable($confDir)) {
+        $saveError = 'Cannot create conf.php: the conf/ directory is not writable by the web server. Run: chmod 775 ' . $confDir;
+    } else if (file_exists($target) && !is_writable($target)) {
+        $saveError = 'Cannot write conf.php: file is not writable by the web server. Run: chmod 664 ' . $target;
+    } else {
+        $tmpTarget = $target . '.tmp.' . getmypid() . '.' . str_replace('.', '_', (string)microtime(true));
+        $result = file_put_contents($tmpTarget, $buffer, LOCK_EX);
+        $saveSuccess = $result !== false;
+        if (!$saveSuccess) {
+            $saveError = 'Failed to write temporary file (' . basename($tmpTarget) . ') in conf/ directory. Check web server write permissions.';
+            @unlink($tmpTarget);
+        } else {
+            $moved = @rename($tmpTarget, $target);
+            if (!$moved) { $moved = (@copy($tmpTarget, $target) && @unlink($tmpTarget)); }
+            $saveSuccess = $moved;
+            if (!$saveSuccess) {
+                $saveError = 'Wrote temporary file but failed to replace conf.php. Check write permissions on ' . $target;
+                @unlink($tmpTarget);
+            }
+        }
+    }
 	if ($saveSuccess) {
 		@clearstatcache(true, $target);
 		if (function_exists('opcache_invalidate')) { @opcache_invalidate($target, true); }
@@ -640,9 +657,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_all'])) {
 		header("Location: " . $redirectUrl);
 		exit;
     } else {
-        Logger::error("Failed writing conf.php from Global Settings UI");
-		// Reload current conf after failed save to keep UI consistent
-    $currentConf = conf_loader_load();
+        if (empty($saveError)) { $saveError = 'Failed to write conf.php. Check web server write permissions on the conf/ directory.'; }
+        Logger::error("Failed writing conf.php from Global Settings UI: " . $saveError);
+        // Reload current conf after failed save to keep UI consistent
+        $currentConf = conf_loader_load();
     }
 }
 
@@ -912,6 +930,11 @@ function current_value(string $flatName, array $currentConf) {
 
     <?php if ($saveSuccess): ?>
         <script>setTimeout(function(){ try{ const t=document.getElementById('toast'); if(t){ t.style.display='block'; t.textContent='Settings saved to conf.php'; setTimeout(()=>{ t.style.display='none'; }, 2500); } }catch(_e){} }, 50);</script>
+    <?php endif; ?>
+    <?php if (!empty($saveError)): ?>
+        <div style="margin-bottom:16px; padding:14px 18px; background:rgba(180,30,30,0.18); border:1px solid rgba(220,60,60,0.5); border-radius:8px; color:#ff9090; font-size:14px; line-height:1.5;">
+            <strong>Save failed:</strong> <?php echo htmlspecialchars($saveError); ?>
+        </div>
     <?php endif; ?>
 
     <form method="post" action="" id="gs_form">

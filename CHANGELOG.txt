@@ -1,10 +1,53 @@
-CHIM Cached Connector v1.5.16 - Release Notes
-==============================================
-Release Date: 2026-02-11
-Compatible with: CHIM 2.3.3+ (synced with upstream 2026-02-06)
+CHIM Cached Connector - Release Notes
+======================================
+
+CHANGES IN v1.6.0b
+-------------------
+Release Date: 2026-02-27
+Compatible with: CHIM 2.4.3+
+
+1. FIX: Global Settings save failures now show visible error messages
+   - Bug: The @file_put_contents/@rename calls silently swallowed errors
+   - Users with permission issues (e.g. root-owned conf.php) saw no feedback
+   - This is an inherent upstream CHIM bug (present in aiagent branch)
+   - Fix: Pre-flight writability checks + red error banner with chmod commands
+   - Removed @ from file_put_contents (kept on fallback rename/copy/unlink)
+
+2. NEW: ui/global_settings.php now included in distribution zip
+   - Contains cached connector compatibility filter (prevents assigning
+     cached connector to incompatible CORE_CONNECTOR types: PLAYER,
+     SUMMARY, MEDIUMTERM, PROFILES)
+   - Contains driver column fetch for connector type display
+   - Includes upstream feature removals (Power Awareness, EMOTEMOODS)
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.6.0
+-----------------
+Release Date: 2026-02-12
+Compatible with: CHIM 2.4.3+
+
+1. CHIM 2.4.3 compatibility update
+   - Updated all package files for CHIM 2.4.3 profile-based architecture
+   - Fixed compatibility issues found in code review
+   - Removed unnecessary reasoning/Mistral overrides
+   - Updated connector VERSION string to reflect CHIM 2.4.3+
+
+2. Upstream lib files synced with CHIM 2.4.3
+   - lib/data_functions.php updated from upstream aiagent branch
+   - lib/chat_helper_functions.php updated from upstream aiagent branch
+   - All cached connector modifications re-applied and verified
+
+3. prompts/dialogue_prompt.php moved to direct upstream overwrite
+   - No longer uses ext/cached_connector/ indirection
+   - Simpler installation, fewer directories to create
+
+--------------------------------------------------------------------------------
 
 CHANGES IN v1.5.16
 ------------------
+Release Date: 2026-02-11
+Compatible with: CHIM 2.3.3+ (synced with upstream 2026-02-06)
 
 1. FIX: JSON format responses now properly returned to game
    - Bug: JSON format messages were accumulated but never returned at stream end
