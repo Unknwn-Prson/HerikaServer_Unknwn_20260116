@@ -1,5 +1,5 @@
-CHIM Cached Connector v1.6.0b - Package Contents
-=================================================
+CHIM Cached Connector v1.7.0 - Package Contents
+================================================
 
 Compatible with: CHIM 2.4.3+
 Release Date: 2026-02-27
@@ -11,14 +11,14 @@ CORE FILES (Required - Minimum for connector to function):
 - conf/conf_schema.json              - Connector registration
 - lib/core/llm_connector.class.php   - Connector instantiation
 - ui/core/llm_connectors.php         - Configuration UI with cache management
-- connector/openrouterjsoncached.php - Main connector (v1.6.0)
+- connector/openrouterjsoncached.php - Main connector (v1.7.0)
 - connector/openrouterjsoncached_helpers.php - Helper functions
 
 UPSTREAM OVERWRITES (Replace upstream files - marked with BEGIN/END comments):
 - lib/data_functions.php         - handlesSentenceSplitting + LOCATION_BLACKLIST fix
 - lib/chat_helper_functions.php  - PRESERVE_ASTERISKS mode in unmoodSentence()
 - prompts/dialogue_prompt.php    - Minimize Quality Instructions feature
-- ui/global_settings.php         - Save bug fix + cached connector compatibility filter (NEW in v1.6.0b)
+- ui/global_settings.php         - Save bug fix + cached connector compatibility filter (NEW in v1.7.0)
 
 DOCUMENTATION:
 - CHANGELOG.txt
@@ -29,7 +29,7 @@ DOCUMENTATION:
 DIRECTORY STRUCTURE
 -------------------
 
-openrouterjsoncached_v1.6.0b_CHIM2.4.3/
+openrouterjsoncached_v1.7.0_CHIM2.4.3/
 ├── CHANGELOG.txt
 ├── PACKAGE_CONTENTS.txt (this file)
 ├── INSTALLATION_INSTRUCTIONS.txt
@@ -67,7 +67,7 @@ appear in the UI and cannot be used.
 NEW FILES: Files that are added alongside existing CHIM files. They do NOT
 replace or modify any upstream file. Safe to install without risk.
 
-UPSTREAM OVERWRITES: Modified versions of CHIM 2.3.3 files. These contain
+UPSTREAM OVERWRITES: Modified versions of CHIM 2.4.3 files. These contain
 small, clearly marked modifications. Installing them replaces the upstream
 version. Each modification is bracketed with:
   // --- BEGIN CACHED CONNECTOR MODIFICATION ---
@@ -111,6 +111,6 @@ FEATURE-TO-FILE MAPPING
 
 VERSION INFORMATION
 -------------------
-Package: CHIM Cached Connector v1.6.0b
+Package: CHIM Cached Connector v1.7.0
 CHIM Compatibility: 2.4.3+
-Connector Version: 1.6.0
+Connector Version: 1.7.0

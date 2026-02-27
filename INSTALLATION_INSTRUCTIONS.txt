@@ -1,5 +1,5 @@
-CHIM Cached Connector v1.6.0b - Installation Instructions
-=========================================================
+CHIM Cached Connector v1.7.0 - Installation Instructions
+========================================================
 
 IMPORTANT: READ BEFORE INSTALLING
 ----------------------------------
@@ -7,7 +7,7 @@ This connector provides advanced caching, thinking/reasoning support,
 flexible quality instruction control, and true sentence-by-sentence
 streaming for simple format.
 
-v1.6.0b is compatible with CHIM 2.4.3+.
+v1.7.0 is compatible with CHIM 2.4.3+.
 
 REQUIREMENTS
 ------------
@@ -44,7 +44,7 @@ INSTALLATION STEPS
    lib/data_functions.php
    lib/chat_helper_functions.php
    prompts/dialogue_prompt.php
-   ui/global_settings.php          (NEW in v1.6.0b)
+   ui/global_settings.php          (NEW in v1.7.0)
 
    If you have custom modifications to these files, review the
    marked sections and merge manually.
@@ -61,7 +61,7 @@ INSTALLATION STEPS
    - Create or edit a connector
    - Select "openrouterjsoncached" from the Driver dropdown
    - Verify caching settings section appears
-   - Version should display as v1.6.0
+   - Version should display as v1.7.0
 
 6. CONFIGURE CONNECTOR
    a. Basic Settings:
@@ -96,7 +96,7 @@ INSTALLATION STEPS
 
 UPGRADING FROM v1.5.x (CHIM 2.3.3)
 ------------------------------------
-v1.6.0b is the CHIM 2.4.3 compatible version. Key changes:
+v1.7.0 is the CHIM 2.4.3 compatible version. Key changes:
 - All lib files synced with CHIM 2.4.3 upstream
 - prompts/dialogue_prompt.php now a direct overwrite (simpler install)
 - ui/global_settings.php now included (save bug fix + compatibility filter)
@@ -132,6 +132,6 @@ with the exact chmod command needed.
 
 VERSION INFORMATION
 -------------------
-Package: CHIM Cached Connector v1.6.0b
+Package: CHIM Cached Connector v1.7.0
 Release Date: 2026-02-27
 CHIM Compatibility: 2.4.3+
