@@ -47,6 +47,11 @@ require_once($path . "lib/core/npc_master.class.php");
 require_once($path . "lib/core/core_profiles.class.php");
 require_once($path . "lib/semaphore_manager.class.php");
 
+// Pipeline status tracking (upstream Prisma HUD support)
+if (file_exists($path . "lib/pipeline_status.php")) {
+    require_once($path . "lib/pipeline_status.php");
+}
+
 // PARSE GET RESPONSE into $gameRequest
 $cooldownPeriod = 600;
 
@@ -2211,7 +2216,11 @@ CALL INITIALIZATION
 
 audit_log(__FILE__." [PRE LLM CALL]  ".__LINE__);
 
+if (function_exists('pipeline_status_set')) pipeline_status_set('llm', true);
+
 $outputWasValid = call_llm();
+
+if (function_exists('pipeline_status_set')) pipeline_status_set('llm', false);
 
 if (!$outputWasValid) {
     Logger::warn("LLM returned invalid output.");
