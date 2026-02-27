@@ -28,7 +28,7 @@ $localSchemaOverrides = [
     ],
     'AUTO_DIARY' => [
         'type' => 'boolean',
-        'description' => 'Automatically create diary entries for all current followers when sleeping. Wait events are controlled by AUTO_DIARY_WAIT setting.',
+        'description' => 'Automatically create diary entries for all current followers. Trigger conditions are controlled by the Diary Generation Mode setting below.',
     ],
     'BORED_EVENT' => [
         'type' => 'integer',
@@ -394,6 +394,8 @@ function consolidation() {
         VISUAL_KEYS.forEach(k => { if (k in base) delete base[k] })
         // Ensure AUTO_DIARY is not stored in profile metadata (global-only)
         if ('AUTO_DIARY' in base) delete base['AUTO_DIARY']
+        // Remove deprecated AUTO_DIARY_WAIT (replaced by DIARY_GENERATION_MODE)
+        if ('AUTO_DIARY_WAIT' in base) delete base['AUTO_DIARY_WAIT']
     }
 
     // Collect visual fields (explicitly iterate over known keys to capture false for checkboxes)

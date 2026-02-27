@@ -1348,7 +1348,7 @@ if ($gameRequest[0] == "wipe") { // Reset reponses if init sent (Think about thi
     Logger::info("WAITSTART event: AUTO_DIARY=" . (isset($GLOBALS["AUTO_DIARY"]) ? ($GLOBALS["AUTO_DIARY"] ? 'true' : 'false') : 'not set'));
     
     if (isset($GLOBALS["AUTO_DIARY"]) && $GLOBALS["AUTO_DIARY"]) {
-        // Process autodiary - AUTO_DIARY_WAIT will be checked per-NPC after loading their profile
+        // Process autodiary - DIARY_GENERATION_MODE will be checked per-NPC after loading their profile
         processAutoDiary($gameRequest, "waitstart");
     } else {
         Logger::info("AUTO_DIARY: Skipping waitstart - AUTO_DIARY is disabled");
