@@ -1,16 +1,15 @@
-# OpenRouter Cached Connector v1.5.5
+# OpenRouter Cached Connector v1.7.6
 
-A high-performance cached connector for CHIM 2.3.3 with multi-provider caching support, flexible response formats, automatic cache invalidation, and comprehensive cache management tools.
+A high-performance cached connector for CHIM 2.4.3+ with multi-provider caching support, flexible response formats, automatic cache invalidation, diary injection, event-based diary generation, and comprehensive cache management tools.
 
 ## Version Information
 
 | Version | CHIM Version | Release Date |
 |---------|--------------|--------------|
+| v1.7.6  | CHIM 2.4.3+  | 2026-02-27   |
+| v1.6.0  | CHIM 2.4.3+  | 2026-02-12   |
+| v1.5.16 | CHIM 2.3.3   | 2026-02-11   |
 | v1.5.5  | CHIM 2.3.3   | 2026-02-06   |
-| v1.5.4  | CHIM 2.3.3   | 2026-02-06   |
-| v1.5.3  | CHIM 2.3.3   | 2026-02-06   |
-| v1.5.2  | CHIM 2.3.3   | 2026-02-06   |
-| v1.5.1  | CHIM 2.3.3   | 2026-02-06   |
 | v1.5.0  | CHIM 2.3.3   | 2026-02-04   |
 | v2.0.1  | CHIM 2.3.3   | 2026-01-29   |
 
@@ -22,11 +21,17 @@ A high-performance cached connector for CHIM 2.3.3 with multi-provider caching s
 - **Dynamic Content Extraction**: Automatically separates static character info from dynamic environment data
 - **Cache Performance Logging**: Track cache efficiency with detailed metrics
 
-### Cache Management (NEW in v2.0.1)
+### Cache Management
 - **Automatic Invalidation**: Time-based (1h inactivity) or sync with profile/memory updates
 - **Cache Statistics UI**: View NPC count, total size, entry count directly in CHIM UI
 - **Manual Cache Clear**: One-click button to clear all NPC cache files
 - **Memory Mode Toggle**: Choose between accumulated (deduplicated) or fresh memory handling
+
+### Diary Features (NEW in v1.7.6)
+- **Diary Injection**: Recall relevant diary entries during NPC dialogue via FTS/vector search
+- **Event-Based Generation**: Alternative to sleep/wait-only diary triggers
+- **Profile-Based Settings**: Per-profile and per-NPC diary configuration
+- **Three Generation Modes**: sleep_wait (original), event_count (new), both
 
 ### Response Format Flexibility
 - **JSON Mode** (default): Structured JSON responses with full validation
@@ -47,7 +52,7 @@ Toggle individual response components:
 ## Installation
 
 ### Quick Install (Recommended)
-1. Download `openrouterjsoncached_v2.0.1_CHIM2.3.3.zip`
+1. Download `openrouterjsoncached_v1.7.6_CHIM2.4.3.zip`
 2. Extract contents directly into your HerikaServer folder
 3. Overwrite existing files when prompted
 
@@ -59,16 +64,17 @@ connector/openrouterjsoncached_helpers.php
 conf/conf_schema.json
 lib/core/llm_connector.class.php
 ui/core/llm_connectors.php
-ui/global_settings.php
 ```
+
+See INSTALLATION_INSTRUCTIONS.txt for the full list including upstream overwrites.
 
 ## Configuration
 
 ### UI Configuration (Recommended)
-1. Go to **CHIM UI → LLM Connectors**
+1. Go to **CHIM UI -> LLM Connectors**
 2. Create a new connector or edit existing
 3. Set **Driver** to `openrouterjsoncached`
-4. Configure settings in the **🔄 Caching Settings** section
+4. Configure settings in the **Caching Settings** section
 
 ### Available Settings
 
@@ -89,6 +95,16 @@ ui/global_settings.php
 | Toggle Thinking | Enable/disable reasoning for supported models |
 | Thinking Tokens | Max tokens for reasoning (Anthropic/Gemini) |
 | Effort Level | Reasoning depth for OpenAI models (minimal/low/medium/high) |
+
+### Diary Settings (Profile-Level)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Inject Diaries | ON | Recall diary entries during dialogue |
+| Diary Threshold Modifier | 0.0 | Scoring threshold adjustment (+stricter, -permissive) |
+| Diary Min Age Hours | 1 | Minimum in-game hours before entry can be recalled |
+| Diary Generation Mode | sleep_wait | How diary generation is triggered |
+| Diary Events Threshold | 50 | Events before auto-generation triggers (event_count mode) |
 
 ### Advanced Settings
 
@@ -145,7 +161,7 @@ ui/global_settings.php
 - Cache cleared when max context size exceeded
 - Simple, predictable behavior
 
-### Sync with Updates (NEW in v2.0.1)
+### Sync with Updates
 - Everything from time-based, PLUS:
 - Automatically detects changes in dynamic profile
 - Automatically detects changes in middle-term memory
@@ -186,15 +202,15 @@ One-click button to clear all cache files:
 ## Compatibility
 
 ### Compatible Connector Types
-- **CORE_CONNECTOR (Main)**: Primary conversation connector ✅
-- **CORE_CONNECTOR_DIRECTOR**: Director mode ✅
+- **CORE_CONNECTOR (Main)**: Primary conversation connector
+- **CORE_CONNECTOR_DIRECTOR**: Director mode
 
 ### Incompatible Connector Types
 These use `fast_request()` which is not supported:
-- CORE_CONNECTOR_PLAYER ❌
-- CORE_CONNECTOR_SUMMARY ❌
-- CORE_CONNECTOR_MEDIUMTERM ❌
-- CORE_CONNECTOR_PROFILES ❌
+- CORE_CONNECTOR_PLAYER
+- CORE_CONNECTOR_SUMMARY
+- CORE_CONNECTOR_MEDIUMTERM
+- CORE_CONNECTOR_PROFILES
 
 The cached connector is automatically hidden from these selections in the UI.
 
@@ -230,7 +246,7 @@ log/_cached_perf.log  - Cache performance metrics
 ## Performance Tips
 
 ### Optimal Cache Settings
-- **Max Cache Context Size**: 93-150 for most uses (93 ≈ 1 hour gameplay)
+- **Max Cache Context Size**: 93-150 for most uses (93 = ~1 hour gameplay)
 - **Uncached Dialogue Count**: 4-6 for balance between freshness and efficiency
 
 ### Provider Selection
@@ -279,10 +295,24 @@ log/_cached_perf.log  - Cache performance metrics
 - Check that NPC has extended_data with dynamic profile fields
 - Verify temp/ directory is writable
 
+### Diary Entries Not Injected
+- Check INJECT_DIARIES is enabled in the active profile
+- Verify diary entries exist in memory_summary
+- Check DIARY_MIN_AGE_HOURS is not filtering out all entries
+
+### Event-Based Diary Not Triggering
+- Check DIARY_GENERATION_MODE is "event_count" or "both"
+- Verify DIARY_EVENTS_THRESHOLD is reasonable (default 50)
+- Ensure AUTO_DIARY is enabled globally
+
 ## Version History
 
 | Version | Date | CHIM | Changes |
 |---------|------|------|---------|
+| v1.7.6 | 2026-02-27 | 2.4.3+ | Diary injection, event-based diary, profile settings, AUTO_DIARY_WAIT removed |
+| v1.6.0 | 2026-02-12 | 2.4.3+ | CHIM 2.4.3 compatibility update |
+| v1.5.16 | 2026-02-11 | 2.3.3 | JSON format stream end fix |
+| v1.5.5 | 2026-02-06 | 2.3.3 | fast_request(), upstream sync |
 | v2.0.1 | 2026-01-29 | 2.3.3 | sync_updates invalidation, cache stats UI, cache clear button |
 | v2.0.0 | 2026-01-28 | 2.3.3 | Port to CHIM 2.3.3, memory mode toggle, close() signature fix |
 | v1.4 | 2026-01-21 | 2.0.5 | Core/Additionals split, bug fixes |
@@ -292,8 +322,8 @@ log/_cached_perf.log  - Cache performance metrics
 
 Based on:
 - Original CHIM Anthropic cache connector
-- OpenRouter JSON connector (CHIM 2.3.3)
-- Enhanced with caching, response formats, and management tools
+- OpenRouter JSON connector
+- Enhanced with caching, response formats, diary features, and management tools
 
 ## Support
 
