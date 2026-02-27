@@ -82,7 +82,7 @@ $localSchemaOverrides = [
     ],
     'DIARY_EVENTS_THRESHOLD' => [
         'type' => 'integer',
-        'description' => 'For event_count mode: generate diary every X qualifying events per NPC.',
+        'description' => 'For event_count mode: generate a diary every X qualifying dialogue events per NPC. If set to 0, will use the regular CONTEXT_HISTORY value instead.',
     ],
     'CONTEXT_HISTORY' => [
         'type' => 'integer',

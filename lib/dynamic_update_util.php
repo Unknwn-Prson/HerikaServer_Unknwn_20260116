@@ -373,7 +373,10 @@ function incrementDiaryEventCounter($npcName, $gameRequest) {
     $record = $db->fetchAll("SELECT value FROM conf_opts WHERE id='" . $db->escape($countKey) . "'");
     $count = (!empty($record)) ? (int)$record[0]['value'] + 1 : 1;
 
-    $threshold = $GLOBALS["DIARY_EVENTS_THRESHOLD"] ?? 50;
+    $threshold = $GLOBALS["DIARY_EVENTS_THRESHOLD"] ?? 0;
+    if ($threshold <= 0) {
+        $threshold = intval($GLOBALS["CONTEXT_HISTORY"] ?? 50);
+    }
 
     if ($count >= $threshold) {
         // Load profile and set globals for this NPC

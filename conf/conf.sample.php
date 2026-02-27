@@ -20,7 +20,7 @@ $INJECT_DIARIES=true; //Enable diary injection into NPC context. Searches past d
 $DIARY_THRESHOLD_MODIFIER=0.0; //How picky diary recall is during conversation. Higher = fewer but more relevant. Lower = broader recall. Range: -0.25 to 0.5.
 $DIARY_MIN_AGE_HOURS=1; //How old a diary entry must be (in game hours) before it can be injected. Prevents injecting diaries just written.
 $DIARY_GENERATION_MODE="sleep_wait"; //How auto-diaries are generated: "sleep_wait" = on sleep/wait, "event_count" = every X events, "both" = either trigger.
-$DIARY_EVENTS_THRESHOLD=50; //For event_count mode: generate diary every X qualifying events per NPC.
+$DIARY_EVENTS_THRESHOLD=0; //For event_count mode: generate diary every X qualifying events per NPC. If 0, uses CONTEXT_HISTORY value.
 $MINIME_T5=false; //Assists smaller weight LLMs with action and memory functions.
 $OGHMA_KNOWLEDGE="knowall"; //Assists smaller weight LLMs with action and memory functions.
 $OGHMA_AMOUNT=1; //Number of Oghma keywords to extract from each response. More keyword extraction will mean longer response times.

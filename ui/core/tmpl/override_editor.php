@@ -117,7 +117,7 @@ $fullSchema = [
     ],
     'DIARY_EVENTS_THRESHOLD' => [
         'type' => 'integer',
-        'description' => 'For event_count mode: generate diary every X qualifying events per NPC.',
+        'description' => 'For event_count mode: generate diary every X qualifying events per NPC. If set to 0, uses CONTEXT_HISTORY value.',
         'category' => 'Diary'
     ],
     'DIARY_COOLDOWN' => [
