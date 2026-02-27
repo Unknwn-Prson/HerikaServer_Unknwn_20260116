@@ -53,7 +53,7 @@ $localSchemaOverrides = [
     ],
     'DIARY_COOLDOWN' => [
         'type' => 'integer',
-        'description' => 'Cooldown period in seconds between diary entries to prevent spam. Each NPC has their own independent cooldown timer.',
+        'description' => 'Cooldown in seconds between sleep/wait-triggered diary entries. Only applies when Diary Generation Mode includes sleep_wait or both. Has no effect on event-count-based diaries.',
     ],
     'COMBAT_BARK_COOLDOWN' => [
         'type' => 'integer',
@@ -63,17 +63,13 @@ $localSchemaOverrides = [
         'type' => 'boolean',
         'description' => "Needs Minime-T5 enabled and running. Tamriel lore information will be added to the prompt, enhancing their understanding on specific topics.",
     ],
-    'AUTO_DIARY_WAIT' => [
-        'type' => 'boolean',
-        'description' => 'When AUTO_DIARY is enabled, this controls whether diary entries are created during wait events. If false, auto diary will only trigger on sleep events.',
-    ],
     'INJECT_DIARIES' => [
         'type' => 'boolean',
         'description' => 'Inject relevant past diary entries into NPC conversation context alongside memory injection.',
     ],
     'DIARY_THRESHOLD_MODIFIER' => [
         'type' => 'number',
-        'description' => 'Diary relevance threshold modifier. Higher = more selective, lower = more permissive. Added to base 0.25.',
+        'description' => 'Controls how picky the system is when recalling past diaries during conversation. Higher = only very relevant diaries are recalled (fewer, more on-topic). Lower = broader recall (more diaries, but may include less relevant ones). Range: -0.25 (very loose) to 0.5 (very strict). Default: 0.',
     ],
     'DIARY_MIN_AGE_HOURS' => [
         'type' => 'integer',
@@ -82,7 +78,7 @@ $localSchemaOverrides = [
     'DIARY_GENERATION_MODE' => [
         'type' => 'select',
         'values' => ['sleep_wait', 'event_count', 'both'],
-        'description' => 'Diary generation trigger: sleep_wait = on sleep/wait, event_count = every X events, both = either trigger.',
+        'description' => 'How auto-diaries are generated. sleep_wait = created when the player sleeps or waits. event_count = created after a set number of dialogue events (see Diary Events Threshold). both = either trigger can fire.',
     ],
     'DIARY_EVENTS_THRESHOLD' => [
         'type' => 'integer',
@@ -135,7 +131,7 @@ $localSchemaOverrides = [
 $visualKeys = [
   "RECHAT_H","RECHAT_P","CORE_LANG","MINIME_T5","BORED_EVENT",
   "DIARY_PROMPT","OGHMA_AMOUNT","LANG_LLM_XTTS","QUEST_COMMENT","DIARY_COOLDOWN","COMBAT_BARK_COOLDOWN",
-  "OGHMA_INFINIUM","AUTO_DIARY_WAIT","CONTEXT_HISTORY","MAX_WORDS_LIMIT","HERIKA_ANIMATIONS",
+  "OGHMA_INFINIUM","CONTEXT_HISTORY","MAX_WORDS_LIMIT","HERIKA_ANIMATIONS",
   "QUEST_COMMENT_CHANCE","RECHAT_ALLOW_ACTIONS","CONTEXT_HISTORY_DIARY","BORED_EVENT_SERVERSIDE","ENFORCE_ACTIONS_PROMPT",
   "REMOVE_ASTERISKS_FROM_OUTPUT","CONTEXT_HISTORY_DYNAMIC_PROFILE",
   "INJECT_DIARIES","DIARY_THRESHOLD_MODIFIER","DIARY_MIN_AGE_HOURS","DIARY_GENERATION_MODE","DIARY_EVENTS_THRESHOLD"
@@ -145,7 +141,7 @@ $visualKeys = [
 $visualGroups = [
   'Core' => ["CORE_LANG","ENFORCE_ACTIONS_PROMPT","REMOVE_ASTERISKS_FROM_OUTPUT","MAX_WORDS_LIMIT"],
   'Rechat' => ["RECHAT_H","RECHAT_P","RECHAT_ALLOW_ACTIONS"],
-  'Diary' => ["DIARY_PROMPT","DIARY_COOLDOWN","AUTO_DIARY_WAIT","INJECT_DIARIES","DIARY_THRESHOLD_MODIFIER","DIARY_MIN_AGE_HOURS","DIARY_GENERATION_MODE","DIARY_EVENTS_THRESHOLD"],
+  'Diary' => ["DIARY_PROMPT","DIARY_GENERATION_MODE","INJECT_DIARIES","DIARY_THRESHOLD_MODIFIER","DIARY_MIN_AGE_HOURS","DIARY_EVENTS_THRESHOLD","DIARY_COOLDOWN"],
   'Combat' => ["COMBAT_BARK_COOLDOWN"],
   'Oghma' => ["OGHMA_INFINIUM","OGHMA_AMOUNT","MINIME_T5"],
   'Context' => ["CONTEXT_HISTORY","CONTEXT_HISTORY_DIARY","CONTEXT_HISTORY_DYNAMIC_PROFILE"],
@@ -342,6 +338,27 @@ function renderMetaInput($key, $schema, $value, $controlOnly = false) {
             function sync(){ if (span) span.textContent = cb.checked ? 'On' : 'Off'; }
             cb.addEventListener('change', sync);
         });
+
+        // Grey out DIARY_COOLDOWN when Diary Generation Mode is "event_count"
+        const modeSelect = document.querySelector('select[name="meta_vis[DIARY_GENERATION_MODE]"]');
+        const cooldownCard = (function(){
+            // Find the provider-card that contains DIARY_COOLDOWN controls
+            const inputs = document.querySelectorAll('[name="meta_vis[DIARY_COOLDOWN]"]');
+            for (const inp of inputs) {
+                const card = inp.closest('.provider-card');
+                if (card) return card;
+            }
+            return null;
+        })();
+        if (modeSelect && cooldownCard) {
+            function syncCooldownState() {
+                const isEventOnly = (modeSelect.value === 'event_count');
+                cooldownCard.style.opacity = isEventOnly ? '0.4' : '1';
+                cooldownCard.style.pointerEvents = isEventOnly ? 'none' : 'auto';
+            }
+            syncCooldownState();
+            modeSelect.addEventListener('change', syncCooldownState);
+        }
     })();
     </script>
 <?php endif; ?>

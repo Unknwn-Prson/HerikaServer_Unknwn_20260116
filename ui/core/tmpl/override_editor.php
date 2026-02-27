@@ -94,20 +94,41 @@ $fullSchema = [
         'description' => 'Custom instructions for generating diary entries.',
         'category' => 'Diary'
     ],
+    'DIARY_GENERATION_MODE' => [
+        'type' => 'select',
+        'values' => ['sleep_wait', 'event_count', 'both'],
+        'description' => 'How auto-diaries are generated. sleep_wait = on sleep/wait. event_count = every X events. both = either trigger.',
+        'category' => 'Diary'
+    ],
+    'INJECT_DIARIES' => [
+        'type' => 'boolean',
+        'description' => 'Inject relevant past diary entries into NPC conversation context.',
+        'category' => 'Diary'
+    ],
+    'DIARY_THRESHOLD_MODIFIER' => [
+        'type' => 'number',
+        'description' => 'How picky diary recall is during conversation. Higher = fewer but more relevant. Lower = broader recall. Range: -0.25 to 0.5.',
+        'category' => 'Diary'
+    ],
+    'DIARY_MIN_AGE_HOURS' => [
+        'type' => 'integer',
+        'description' => 'Minimum age in game hours before a diary can be recalled. Prevents NPCs referencing entries they just wrote.',
+        'category' => 'Diary'
+    ],
+    'DIARY_EVENTS_THRESHOLD' => [
+        'type' => 'integer',
+        'description' => 'For event_count mode: generate diary every X qualifying events per NPC.',
+        'category' => 'Diary'
+    ],
     'DIARY_COOLDOWN' => [
         'type' => 'integer',
-        'description' => 'Cooldown in seconds between diary entries to prevent spam.',
+        'description' => 'Cooldown in seconds between sleep/wait-triggered diary entries. Has no effect on event-count-based diaries.',
         'category' => 'Diary'
     ],
     'COMBAT_BARK_COOLDOWN' => [
         'type' => 'integer',
         'description' => 'Cooldown in seconds between combat barks. Global across all NPCs in the party.',
         'category' => 'Combat'
-    ],
-    'AUTO_DIARY_WAIT' => [
-        'type' => 'boolean',
-        'description' => 'When AUTO_DIARY is enabled, controls whether diary entries are created during wait events.',
-        'category' => 'Diary'
     ],
     'OGHMA_INFINIUM' => [
         'type' => 'boolean',

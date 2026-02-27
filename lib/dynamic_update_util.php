@@ -301,13 +301,12 @@ function processAutoDiary($gameRequest, $eventType) {
         $profile->setOldGlobals($currentProfileData);
         $npcMaster->setOldGlobalsFromCurrentNpcData($currentNpcData);
 
-        // Check AUTO_DIARY_WAIT after loading profile (so profile overrides apply)
-        // For goodnight events, always generate. For waitstart events, check the setting.
-        $shouldGenerate = ($eventType === "goodnight") || 
-                         (isset($GLOBALS["AUTO_DIARY_WAIT"]) && $GLOBALS["AUTO_DIARY_WAIT"]);
-        
-        Logger::info("AUTO_DIARY: $npcName - eventType=$eventType, AUTO_DIARY_WAIT=" . 
-                    (isset($GLOBALS["AUTO_DIARY_WAIT"]) ? ($GLOBALS["AUTO_DIARY_WAIT"] ? 'true' : 'false') : 'not set') . 
+        // Check DIARY_GENERATION_MODE after loading profile (so profile overrides apply)
+        // sleep_wait and both modes allow sleep/wait event triggers; event_count mode does not.
+        $diaryMode = $GLOBALS["DIARY_GENERATION_MODE"] ?? "sleep_wait";
+        $shouldGenerate = ($diaryMode === "sleep_wait" || $diaryMode === "both");
+
+        Logger::info("AUTO_DIARY: $npcName - eventType=$eventType, DIARY_GENERATION_MODE=$diaryMode" .
                     ", shouldGenerate=" . ($shouldGenerate ? 'true' : 'false'));
 
         if ($shouldGenerate) {
@@ -329,7 +328,7 @@ function processAutoDiary($gameRequest, $eventType) {
                 Logger::info("AUTO_DIARY: Failed to generate diary entry for $npcName");
             }
         } else {
-            Logger::info("AUTO_DIARY: Skipped $npcName - AUTO_DIARY_WAIT disabled for this profile");
+            Logger::info("AUTO_DIARY: Skipped $npcName - DIARY_GENERATION_MODE is '$diaryMode' (event_count only)");
         }
     }
     
@@ -377,29 +376,14 @@ function incrementDiaryEventCounter($npcName, $gameRequest) {
     $threshold = $GLOBALS["DIARY_EVENTS_THRESHOLD"] ?? 50;
 
     if ($count >= $threshold) {
-        // Check cooldown (same inline pattern as processAutoDiary)
-        $cooldownKey = "DIARY_LAST_TIMESTAMP_" . $npcNameSafe;
-        $cooldownPeriod = isset($GLOBALS["DIARY_COOLDOWN"]) ? intval($GLOBALS["DIARY_COOLDOWN"]) : 120;
-        $cooldownRecord = $db->fetchAll("SELECT value FROM conf_opts WHERE id='" . $db->escape($cooldownKey) . "'");
-        $canGenerate = true;
-        if (!empty($cooldownRecord)) {
-            $elapsed = time() - (int)$cooldownRecord[0]['value'];
-            if ($elapsed < $cooldownPeriod) { $canGenerate = false; }
-        }
+        // Load profile and set globals for this NPC
+        $profile = new CoreProfile();
+        $profileData = $profile->getById($npcData["profile_id"]);
+        $profile->setOldGlobals($profileData);
+        $npcMaster->setOldGlobalsFromCurrentNpcData($npcData);
 
-        if ($canGenerate) {
-            // Load profile and set globals for this NPC
-            $profile = new CoreProfile();
-            $profileData = $profile->getById($npcData["profile_id"]);
-            $profile->setOldGlobals($profileData);
-            $npcMaster->setOldGlobalsFromCurrentNpcData($npcData);
-
-            // Update cooldown timestamp
-            $db->upsertRowOnConflict('conf_opts', ['id' => $cooldownKey, 'value' => time()], "id");
-
-            if (generateFollowerDiary($npcName, $gameRequest, "event_count")) {
-                Logger::info("DIARY_EVENT_COUNT: Generated diary for $npcName (threshold $threshold reached)");
-            }
+        if (generateFollowerDiary($npcName, $gameRequest, "event_count")) {
+            Logger::info("DIARY_EVENT_COUNT: Generated diary for $npcName (threshold $threshold reached)");
         }
 
         // Reset counter regardless of whether we generated (avoids re-triggering)

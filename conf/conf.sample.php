@@ -13,14 +13,13 @@ $HERIKA_PERS="You are The Narrator in a Skyrim adventure. You will only talk to 
     . "Your goal is to comment on #PLAYER_NAME#'s playthrough, and occasionally give hints. NO SPOILERS. " 
     . "Talk about quests and last events."; //NPC personality.
 $HERIKA_DYNAMIC=''; //Split Biography for information to be changed dynamically. 
-$DIARY_COOLDOWN=120; //Cooldown period in seconds between diary entries to prevent spam. If a diary hotkey is pressed within this time period, the request will be ignored.
+$DIARY_COOLDOWN=120; //Cooldown in seconds between sleep/wait-triggered diary entries. Has no effect on event-count diaries.
 $DYNAMIC_PROFILE=false; //Dynamic profile updates using a timer system.
-$AUTO_DIARY=true; //Automatically create diary entries for all current followers when sleeping. Wait events are controlled by AUTO_DIARY_WAIT setting. Each follower respects their individual diary cooldown timer.
-$AUTO_DIARY_WAIT=false; //When AUTO_DIARY is enabled, this controls whether diary entries are created during wait events. If false, auto diary will only trigger on sleep events.
+$AUTO_DIARY=true; //Automatically create diary entries for all current followers when sleeping. Each follower respects their individual diary cooldown timer.
 $INJECT_DIARIES=true; //Enable diary injection into NPC context. Searches past diary entries for relevance to current conversation.
-$DIARY_THRESHOLD_MODIFIER=0.0; //Diary relevance threshold modifier. Higher = more selective, lower = more permissive. Added to base threshold of 0.25.
+$DIARY_THRESHOLD_MODIFIER=0.0; //How picky diary recall is during conversation. Higher = fewer but more relevant. Lower = broader recall. Range: -0.25 to 0.5.
 $DIARY_MIN_AGE_HOURS=1; //How old a diary entry must be (in game hours) before it can be injected. Prevents injecting diaries just written.
-$DIARY_GENERATION_MODE="sleep_wait"; //Diary generation mode: "sleep_wait" = on sleep/wait only, "event_count" = every X events, "both" = both triggers.
+$DIARY_GENERATION_MODE="sleep_wait"; //How auto-diaries are generated: "sleep_wait" = on sleep/wait, "event_count" = every X events, "both" = either trigger.
 $DIARY_EVENTS_THRESHOLD=50; //For event_count mode: generate diary every X qualifying events per NPC.
 $MINIME_T5=false; //Assists smaller weight LLMs with action and memory functions.
 $OGHMA_KNOWLEDGE="knowall"; //Assists smaller weight LLMs with action and memory functions.
