@@ -67,6 +67,27 @@ $localSchemaOverrides = [
         'type' => 'boolean',
         'description' => 'When AUTO_DIARY is enabled, this controls whether diary entries are created during wait events. If false, auto diary will only trigger on sleep events.',
     ],
+    'INJECT_DIARIES' => [
+        'type' => 'boolean',
+        'description' => 'Inject relevant past diary entries into NPC conversation context alongside memory injection.',
+    ],
+    'DIARY_THRESHOLD_MODIFIER' => [
+        'type' => 'number',
+        'description' => 'Diary relevance threshold modifier. Higher = more selective, lower = more permissive. Added to base 0.25.',
+    ],
+    'DIARY_MIN_AGE_HOURS' => [
+        'type' => 'integer',
+        'description' => 'Minimum age in game hours before a diary can be injected. Prevents recalling entries just written.',
+    ],
+    'DIARY_GENERATION_MODE' => [
+        'type' => 'select',
+        'values' => ['sleep_wait', 'event_count', 'both'],
+        'description' => 'Diary generation trigger: sleep_wait = on sleep/wait, event_count = every X events, both = either trigger.',
+    ],
+    'DIARY_EVENTS_THRESHOLD' => [
+        'type' => 'integer',
+        'description' => 'For event_count mode: generate diary every X qualifying events per NPC.',
+    ],
     'CONTEXT_HISTORY' => [
         'type' => 'integer',
         'description' => 'Amount of context history (dialogue and events) that will be sent to LLM. Improves short term memory.Higher Context = more tokens used and slower response time.We recommend you do not go over 100',
@@ -116,14 +137,15 @@ $visualKeys = [
   "DIARY_PROMPT","OGHMA_AMOUNT","LANG_LLM_XTTS","QUEST_COMMENT","DIARY_COOLDOWN","COMBAT_BARK_COOLDOWN",
   "OGHMA_INFINIUM","AUTO_DIARY_WAIT","CONTEXT_HISTORY","MAX_WORDS_LIMIT","HERIKA_ANIMATIONS",
   "QUEST_COMMENT_CHANCE","RECHAT_ALLOW_ACTIONS","CONTEXT_HISTORY_DIARY","BORED_EVENT_SERVERSIDE","ENFORCE_ACTIONS_PROMPT",
-  "REMOVE_ASTERISKS_FROM_OUTPUT","CONTEXT_HISTORY_DYNAMIC_PROFILE"
+  "REMOVE_ASTERISKS_FROM_OUTPUT","CONTEXT_HISTORY_DYNAMIC_PROFILE",
+  "INJECT_DIARIES","DIARY_THRESHOLD_MODIFIER","DIARY_MIN_AGE_HOURS","DIARY_GENERATION_MODE","DIARY_EVENTS_THRESHOLD"
 ];
 
 // Organize visual keys into categories for display
 $visualGroups = [
   'Core' => ["CORE_LANG","ENFORCE_ACTIONS_PROMPT","REMOVE_ASTERISKS_FROM_OUTPUT","MAX_WORDS_LIMIT"],
   'Rechat' => ["RECHAT_H","RECHAT_P","RECHAT_ALLOW_ACTIONS"],
-  'Diary' => ["DIARY_PROMPT","DIARY_COOLDOWN","AUTO_DIARY_WAIT"],
+  'Diary' => ["DIARY_PROMPT","DIARY_COOLDOWN","AUTO_DIARY_WAIT","INJECT_DIARIES","DIARY_THRESHOLD_MODIFIER","DIARY_MIN_AGE_HOURS","DIARY_GENERATION_MODE","DIARY_EVENTS_THRESHOLD"],
   'Combat' => ["COMBAT_BARK_COOLDOWN"],
   'Oghma' => ["OGHMA_INFINIUM","OGHMA_AMOUNT","MINIME_T5"],
   'Context' => ["CONTEXT_HISTORY","CONTEXT_HISTORY_DIARY","CONTEXT_HISTORY_DYNAMIC_PROFILE"],
@@ -206,7 +228,10 @@ function renderMetaInput($key, $schema, $value, $controlOnly = false) {
             'DIARY_COOLDOWN' => ['min'=>10,'max'=>1200,'step'=>1],
             'COMBAT_BARK_COOLDOWN' => ['min'=>10,'max'=>600,'step'=>1],
             'CONTEXT_HISTORY_DIARY' => ['min'=>0,'max'=>400,'step'=>1],
-            'CONTEXT_HISTORY_DYNAMIC_PROFILE' => ['min'=>0,'max'=>400,'step'=>1]
+            'CONTEXT_HISTORY_DYNAMIC_PROFILE' => ['min'=>0,'max'=>400,'step'=>1],
+            'DIARY_THRESHOLD_MODIFIER' => ['min'=>-0.25,'max'=>0.5,'step'=>0.05],
+            'DIARY_MIN_AGE_HOURS' => ['min'=>0,'max'=>48,'step'=>1],
+            'DIARY_EVENTS_THRESHOLD' => ['min'=>5,'max'=>500,'step'=>5]
         ];
 
         if (($type==='integer' || $type==='number') && isset($ranges[$key])) {

@@ -3185,7 +3185,7 @@ function DirectConversationsWith($actor, $speaker="")
     
 }
 
-function DataSearchMemory($rawstring,$npcfilter) {
+function DataSearchMemory($rawstring,$npcfilter,$classifierFilter=null) {
     
     //$kw=explode(" ",($rawstring));
     if (is_array($rawstring)) {
@@ -3301,6 +3301,12 @@ function DataSearchMemory($rawstring,$npcfilter) {
     
     
     
+    $classifierClause = '';
+    if ($classifierFilter && is_array($classifierFilter)) {
+        $escaped = array_map(function($c) { return "'" . $GLOBALS["db"]->escape($c) . "'"; }, $classifierFilter);
+        $classifierClause = "and classifier IN (" . implode(",", $escaped) . ")";
+    }
+
     $memory=$GLOBALS["db"]->fetchAll("
         SELECT summary,gamets_truncated,
         ts_rank(native_vec, to_tsquery('$kwStringAny')) AS rank_any,
@@ -3309,7 +3315,7 @@ function DataSearchMemory($rawstring,$npcfilter) {
         where native_vec @@to_tsquery('$kwStringAny')
         and not (native_vec @@to_tsquery('#Reminiscence'))
         and companions like '|%{$GLOBALS["db"]->escape($npcfilter)}|%'
-
+        $classifierClause
         ORDER BY rank_all DESC, rank_any DESC;
         ",true);
             
@@ -3334,7 +3340,7 @@ function DataSearchMemory($rawstring,$npcfilter) {
 }
 
 
-function DataSearchMemoryByVector($rawstring,$npcfilter,$useContextKw=false,$timeThreshold=0) {
+function DataSearchMemoryByVector($rawstring,$npcfilter,$useContextKw=false,$timeThreshold=0,$classifierFilter=null) {
     
         $localStartTime=microtime(true);
         Logger::info("Using DataSearchMemoryByVector $rawstring,$npcfilter,$useContextKw=false,$timeThreshold=0");
@@ -3558,6 +3564,12 @@ function DataSearchMemoryByVector($rawstring,$npcfilter,$useContextKw=false,$tim
                     LIMIT 5 OFFSET 0
                 ";
 
+            $vecClassifierClause = '';
+            if ($classifierFilter && is_array($classifierFilter)) {
+                $escaped = array_map(function($c) { return "'" . $GLOBALS["db"]->escape($c) . "'"; }, $classifierFilter);
+                $vecClassifierClause = "and classifier IN (" . implode(",", $escaped) . ")";
+            }
+
              $finalQuery="
                 SELECT rowid,gamets_truncated,
                         embedding <-> $vectorString as distance,
@@ -3567,11 +3579,11 @@ function DataSearchMemoryByVector($rawstring,$npcfilter,$useContextKw=false,$tim
                          ts_rank(native_vec, to_tsquery('$kwStringAny'))+ts_rank(native_vec, to_tsquery('$kwStringAll')) AS rank_all_fts,
                          (embedding <-> $vectorString) - (ts_rank(native_vec, to_tsquery('$kwStringAny'))+ts_rank(native_vec, to_tsquery('$kwStringAll')) ) AS mixed_distance,
                          summary
-                    FROM public.memory_summary 
+                    FROM public.memory_summary
                     WHERE embedding IS NOT NULL
                     and companions like '|%{$GLOBALS["db"]->escape($npcfilter)}|%'
                     and (gamets_truncated<$timeThreshold or $timeThreshold=0)
-                    
+                    $vecClassifierClause
                     ORDER BY 
                         round((embedding <-> $vectorString)::numeric, 2) ASC,
                         (ts_rank(native_vec, to_tsquery('$kwStringAny'))+ts_rank(native_vec, to_tsquery('$kwStringAll'))) DESC

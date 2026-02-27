@@ -17,6 +17,11 @@ $DIARY_COOLDOWN=120; //Cooldown period in seconds between diary entries to preve
 $DYNAMIC_PROFILE=false; //Dynamic profile updates using a timer system.
 $AUTO_DIARY=true; //Automatically create diary entries for all current followers when sleeping. Wait events are controlled by AUTO_DIARY_WAIT setting. Each follower respects their individual diary cooldown timer.
 $AUTO_DIARY_WAIT=false; //When AUTO_DIARY is enabled, this controls whether diary entries are created during wait events. If false, auto diary will only trigger on sleep events.
+$INJECT_DIARIES=true; //Enable diary injection into NPC context. Searches past diary entries for relevance to current conversation.
+$DIARY_THRESHOLD_MODIFIER=0.0; //Diary relevance threshold modifier. Higher = more selective, lower = more permissive. Added to base threshold of 0.25.
+$DIARY_MIN_AGE_HOURS=1; //How old a diary entry must be (in game hours) before it can be injected. Prevents injecting diaries just written.
+$DIARY_GENERATION_MODE="sleep_wait"; //Diary generation mode: "sleep_wait" = on sleep/wait only, "event_count" = every X events, "both" = both triggers.
+$DIARY_EVENTS_THRESHOLD=50; //For event_count mode: generate diary every X qualifying events per NPC.
 $MINIME_T5=false; //Assists smaller weight LLMs with action and memory functions.
 $OGHMA_KNOWLEDGE="knowall"; //Assists smaller weight LLMs with action and memory functions.
 $OGHMA_AMOUNT=1; //Number of Oghma keywords to extract from each response. More keyword extraction will mean longer response times.

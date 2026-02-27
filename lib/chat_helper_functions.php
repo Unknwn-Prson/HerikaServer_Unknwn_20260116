@@ -1952,6 +1952,96 @@ function offerMemory($gameRequest)
     return ($memory);
 }
 
+// --- BEGIN DIARY INJECTION ---
+// Searches memory_summary for diary-classified entries and returns a relevant
+// diary entry for injection into NPC context, separate from memory injection.
+function offerDiary($gameRequest)
+{
+    global $db;
+
+    // Check global toggle
+    if (isset($GLOBALS["INJECT_DIARIES"]) && !$GLOBALS["INJECT_DIARIES"]) {
+        return "";
+    }
+
+    if (isset($GLOBALS["FEATURES"]["MEMORY_EMBEDDING"]["ENABLED"]) && !$GLOBALS["FEATURES"]["MEMORY_EMBEDDING"]["ENABLED"]) {
+        return "";
+    }
+
+    $npc = $GLOBALS["HERIKA_NAME"];
+    if ($npc == "The Narrator") {
+        $npc = "";
+    }
+
+    $diaryClassifiers = ['diary', 'auto_diary', 'backgroundlife_diary'];
+    $thresholdMod = isset($GLOBALS["DIARY_THRESHOLD_MODIFIER"]) ? $GLOBALS["DIARY_THRESHOLD_MODIFIER"] : ($GLOBALS["MEMORY_THRESHOLD_MODIFIER"] ?? 0);
+    $minAgeHours = isset($GLOBALS["DIARY_MIN_AGE_HOURS"]) ? intval($GLOBALS["DIARY_MIN_AGE_HOURS"]) : 1;
+
+    // Search diary entries using existing infrastructure with classifier filter
+    if ($GLOBALS["FEATURES"]["MEMORY_EMBEDDING"]["USE_TEXT2VEC"]) {
+        $res = DataSearchMemoryByVector($gameRequest[3], $npc, true, 0, $diaryClassifiers);
+        $res2 = DataSearchMemoryByVector($gameRequest[3], $npc, false, 0, $diaryClassifiers);
+
+        if (isset($res[0]) && isset($res2[0])) {
+            $resFinal = ($res[0]['rank_any'] >= $res2[0]['rank_any']) ? $res : $res2;
+        } else {
+            $resFinal = isset($res[0]['rank_any']) ? $res : (isset($res2[0]['rank_any']) ? $res2 : []);
+        }
+        $diaries = $resFinal;
+    } else {
+        $diaries = DataSearchMemory($gameRequest[3], $npc, $diaryClassifiers);
+    }
+
+    if (!isset($diaries[0])) {
+        error_log("[DIARY] No diary entries found");
+        return "";
+    }
+
+    // Threshold check (same logic as offerMemory)
+    $d = $diaries[0];
+    $passed = false;
+    if (($d["rank_any"] == $d["rank_all"]) && ($d["rank_any"] > (0.25 + $thresholdMod))) {
+        $passed = true;
+    } else if ((($d["rank_all"] + $d["rank_any"]) / 2) > (0.25 + $thresholdMod)) {
+        $passed = true;
+    } else if (($d["rank_any"] > (0.50 + $thresholdMod)) && isset($d["mixed_distance"])) {
+        $passed = true;
+    }
+
+    if (!$passed) {
+        error_log("[DIARY] Diary discarded by scoring");
+        return "";
+    }
+
+    $diary = isset($d["summary"]) ? $d["summary"] : "";
+    if (empty($diary)) {
+        return "";
+    }
+
+    // Time calculation and minimum age check
+    $hoursAgo = round(($gameRequest[2] - $d["gamets_truncated"]) * 0.0000024, 0);
+    if ($hoursAgo < $minAgeHours) {
+        error_log("[DIARY] Diary too recent ({$hoursAgo}h ago, min {$minAgeHours}h)");
+        return "";
+    }
+
+    // Format with time prefix
+    if ($hoursAgo > getGametsLimitFor($GLOBALS["HERIKA_NAME"])) {
+        $daysAgo = floor(($gameRequest[2] - $d["gamets_truncated"]) * 0.0000001);
+        $sk_date = gamets2str_format_date($d["gamets_truncated"], 'Y-m-d');
+        $s_prefix = "{$daysAgo} days ago, on {$sk_date}, {$GLOBALS['HERIKA_NAME']} wrote in their diary: ";
+    } else {
+        $s_prefix = "{$hoursAgo} hours ago, {$GLOBALS['HERIKA_NAME']} wrote in their diary: ";
+    }
+
+    // Strip tags line
+    $output = preg_replace('/#Tags:.*/', '', $diary);
+    $result = $s_prefix . $output;
+    error_log("[DIARY] Returning diary entry <" . substr($result, 0, 40) . "...>");
+    return $result;
+}
+// --- END DIARY INJECTION ---
+
 function offerMemoryNew($gameRequest, $DIALOGUE_TARGET)
 {
     global $db;

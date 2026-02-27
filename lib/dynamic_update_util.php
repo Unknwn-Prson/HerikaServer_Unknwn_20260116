@@ -336,6 +336,81 @@ function processAutoDiary($gameRequest, $eventType) {
     Logger::info("AUTO_DIARY: Processed $processedCount NPCs with auto_diary_enabled, generated $generatedCount diary entries");
 }
 
+// --- BEGIN DIARY EVENT COUNTER ---
+// Increments a per-NPC event counter and triggers diary generation when threshold is reached.
+// Called from main.php on qualifying dialogue events. Counter persists via conf_opts table.
+function incrementDiaryEventCounter($npcName, $gameRequest) {
+    global $db;
+
+    $mode = $GLOBALS["DIARY_GENERATION_MODE"] ?? "sleep_wait";
+    if ($mode !== "event_count" && $mode !== "both") {
+        return;
+    }
+
+    $eventType = $gameRequest[0];
+    $qualifyingEvents = $GLOBALS["DIARY_EVENTS_TYPE_FILTER"] ?? ["inputtext", "ginputtext", "info"];
+    if (!in_array($eventType, $qualifyingEvents)) {
+        return;
+    }
+
+    // Check if NPC has auto_diary_enabled
+    $npcMaster = new NpcMaster();
+    $npcData = $npcMaster->getByName($npcName);
+    if (empty($npcData)) return;
+
+    $autoDiaryEnabled = false;
+    if (!empty($npcData['extended_data'])) {
+        $ext = json_decode($npcData['extended_data'], true);
+        if (is_array($ext) && !empty($ext['auto_diary_enabled'])) {
+            $autoDiaryEnabled = true;
+        }
+    }
+    if (!$autoDiaryEnabled) return;
+
+    // Increment counter in conf_opts
+    $npcNameSafe = preg_replace('/[^a-zA-Z0-9_]/', '_', $npcName);
+    $countKey = "DIARY_EVENT_COUNT_" . $npcNameSafe;
+
+    $record = $db->fetchAll("SELECT value FROM conf_opts WHERE id='" . $db->escape($countKey) . "'");
+    $count = (!empty($record)) ? (int)$record[0]['value'] + 1 : 1;
+
+    $threshold = $GLOBALS["DIARY_EVENTS_THRESHOLD"] ?? 50;
+
+    if ($count >= $threshold) {
+        // Check cooldown (same inline pattern as processAutoDiary)
+        $cooldownKey = "DIARY_LAST_TIMESTAMP_" . $npcNameSafe;
+        $cooldownPeriod = isset($GLOBALS["DIARY_COOLDOWN"]) ? intval($GLOBALS["DIARY_COOLDOWN"]) : 120;
+        $cooldownRecord = $db->fetchAll("SELECT value FROM conf_opts WHERE id='" . $db->escape($cooldownKey) . "'");
+        $canGenerate = true;
+        if (!empty($cooldownRecord)) {
+            $elapsed = time() - (int)$cooldownRecord[0]['value'];
+            if ($elapsed < $cooldownPeriod) { $canGenerate = false; }
+        }
+
+        if ($canGenerate) {
+            // Load profile and set globals for this NPC
+            $profile = new CoreProfile();
+            $profileData = $profile->getById($npcData["profile_id"]);
+            $profile->setOldGlobals($profileData);
+            $npcMaster->setOldGlobalsFromCurrentNpcData($npcData);
+
+            // Update cooldown timestamp
+            $db->upsertRowOnConflict('conf_opts', ['id' => $cooldownKey, 'value' => time()], "id");
+
+            if (generateFollowerDiary($npcName, $gameRequest, "event_count")) {
+                Logger::info("DIARY_EVENT_COUNT: Generated diary for $npcName (threshold $threshold reached)");
+            }
+        }
+
+        // Reset counter regardless of whether we generated (avoids re-triggering)
+        $count = 0;
+    }
+
+    // Store updated count
+    $db->upsertRowOnConflict('conf_opts', ['id' => $countKey, 'value' => $count], "id");
+}
+// --- END DIARY EVENT COUNTER ---
+
 // Function to process a single NPC's dynamic profile
 function processSingleDynamicProfile($npcName, $gameRequest) {
     global $db;

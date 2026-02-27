@@ -1675,7 +1675,22 @@ if (in_array($gameRequest[0],["inputtext","inputtext_s","ginputtext","ginputtext
 } else
      $memoryInjectionCtx=[];
 
+// --- BEGIN DIARY INJECTION ---
+if (in_array($gameRequest[0],["inputtext","inputtext_s","ginputtext","ginputtext_s","narrator_inputtext","rechat","narration"]) ) {
+    if (!isset($GLOBALS["INJECT_DIARIES"]) || $GLOBALS["INJECT_DIARIES"]) {
+        $diaryInjection = offerDiary($gameRequest);
+        if (!empty($diaryInjection)) {
+            $memoryInjectionCtx[] = array('role' => 'user', 'content' => "<diary> {$GLOBALS["HERIKA_NAME"]} recalls from their diary: [$diaryInjection] </diary>");
+        }
+    }
+}
+// --- END DIARY INJECTION ---
 
+// --- BEGIN DIARY EVENT COUNTER ---
+if (function_exists('incrementDiaryEventCounter')) {
+    incrementDiaryEventCounter($GLOBALS["HERIKA_NAME"], $gameRequest);
+}
+// --- END DIARY EVENT COUNTER ---
 
 // array('role' => $currentSpeaker, 'content' => implode("\n", $buffer));
 
