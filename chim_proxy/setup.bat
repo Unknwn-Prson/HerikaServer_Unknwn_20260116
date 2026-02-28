@@ -48,9 +48,10 @@ echo.
 :: 3. Install Python dependencies
 echo [3/7] Installing Python dependencies...
 cd /d "%~dp0"
-python -m pip install -r requirements.txt
+python -c "import ensurepip; ensurepip._main()" >nul 2>&1
+python -c "import subprocess, sys; sys.exit(subprocess.call([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt']))"
 if %errorlevel% neq 0 (
-    echo [WARN] pip install had issues - you may need to fix manually
+    echo [WARN] Package install had issues - you may need to fix manually
 ) else (
     echo       Done!
 )
