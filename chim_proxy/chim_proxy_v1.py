@@ -56,7 +56,6 @@ import os
 import re
 import shutil
 import socket
-import subprocess
 import sys
 import tempfile
 import threading
@@ -1039,20 +1038,7 @@ if __name__ == "__main__":
             sys.exit(1)
         print(f"\n  NOTE: Port {original_port} is in use — using port {port} instead.")
 
-    # Detect real LAN/WSL IP addresses (not just localhost)
-    local_ips = []
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            ip = info[4][0]
-            if not ip.startswith("127."):
-                if ip not in local_ips:
-                    local_ips.append(ip)
-    except Exception:
-        pass
-
-    # Primary IP: first detected LAN address, fallback to localhost
-    primary_ip = local_ips[0] if local_ips else "127.0.0.1"
-    proxy_url = f"http://{primary_ip}:{port}/v1/chat/completions"
+    proxy_url = f"http://127.0.0.1:{port}/v1/chat/completions"
 
     print(f"\n  Content format: {CONTENT_FORMAT}")
     print(f"  Effort level:  {EFFORT_LEVEL or 'auto (per-request)'}")
@@ -1060,45 +1046,10 @@ if __name__ == "__main__":
     print()
     print("  " + "=" * 60)
     print(f"    Proxy URL:   {proxy_url}")
-    if len(local_ips) > 1:
-        for ip in local_ips[1:]:
-            print(f"                 http://{ip}:{port}/v1/chat/completions")
-    print(f"    Localhost:   http://127.0.0.1:{port}/v1/chat/completions")
     print("  " + "-" * 60)
-    print(f"    Dashboard:   http://{primary_ip}:{port}/")
-    print(f"    Health:      http://{primary_ip}:{port}/health")
+    print(f"    Dashboard:   http://127.0.0.1:{port}/")
+    print(f"    Health:      http://127.0.0.1:{port}/health")
     print("  " + "=" * 60)
     print()
-
-    # --- Windows firewall keepalive ----------------------------------------
-    # Re-applies the inbound allow rule every 5 minutes so Windows doesn't
-    # silently drop it (profile changes, sleep/wake, etc.).
-    def _firewall_keepalive(listen_port: int):
-        if sys.platform != "win32":
-            return
-        rule_name = "CHIM Proxy"
-        while True:
-            try:
-                # Delete + re-add is idempotent and handles port changes
-                subprocess.run(
-                    ["netsh", "advfirewall", "firewall", "delete", "rule",
-                     f"name={rule_name}"],
-                    capture_output=True, timeout=10,
-                )
-                subprocess.run(
-                    ["netsh", "advfirewall", "firewall", "add", "rule",
-                     f"name={rule_name}", "dir=in", "action=allow",
-                     "protocol=TCP", f"localport={listen_port}"],
-                    capture_output=True, timeout=10,
-                )
-            except Exception as exc:
-                logger.debug(f"Firewall refresh failed: {exc}")
-            time.sleep(300)  # every 5 minutes
-
-    fw_thread = threading.Thread(
-        target=_firewall_keepalive, args=(port,), daemon=True
-    )
-    fw_thread.start()
-    # -----------------------------------------------------------------------
 
     uvicorn.run(app, host=host, port=port)
