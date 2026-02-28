@@ -31,6 +31,12 @@ Content format (selectable at startup):
   Array mode  → preserves CHIM's block structure as JSON arrays in CLAUDE.md and stdin
   Flat mode   → flattens content to plain text (original behavior)
 
+Effort level (selectable at startup, overridable per-request):
+  Startup default → sets --effort flag on every CLI invocation
+  Per-request     → CHIM connector sends "reasoning" field with effort/thinking settings
+  Priority: per-request reasoning.effort > startup default > none
+  Mapping: CHIM "minimal" → CLI "low", "low"/"medium"/"high" pass through directly
+
 NPC name handling:
   Auto-detected from system prompt ("You are [Name]" / "Name: [Name]")
   Can be overridden via "npc_name" field in the request body
@@ -89,6 +95,10 @@ _ENV.pop("CLAUDECODE", None)  # Allow spawning claude from within a Claude Code 
 # Content format: "array" (CHIM-style JSON block arrays) or "flat" (plain text)
 # Set interactively at startup via __main__
 CONTENT_FORMAT = "flat"
+
+# Effort level: "low", "medium", "high", or None (let model decide)
+# Set interactively at startup via __main__; can be overridden per-request via reasoning field
+EFFORT_LEVEL = None
 
 
 # ---------------------------------------------------------------------------
@@ -489,9 +499,9 @@ def _log_request(request_id: str, model: str, claude_md: Optional[str],
         logger.warning(f"[{request_id}] Failed to write request log: {e}")
 
 
-def _build_cmd(model: str) -> list[str]:
+def _build_cmd(model: str, effort: Optional[str] = None) -> list[str]:
     """Build claude CLI command with all context-minimization flags."""
-    return [
+    cmd = [
         CLAUDE_PATH, "-p",
         "--tools=",                          # No tools → no tool descriptions in context
         "--disable-slash-commands",          # No skill descriptions in context
@@ -501,9 +511,41 @@ def _build_cmd(model: str) -> list[str]:
         "--max-turns", "1",                  # Single response, no tool loops
         "--no-session-persistence",          # Don't save session to disk
     ]
+    if effort and effort in ("low", "medium", "high"):
+        cmd.extend(["--effort", effort])
+    return cmd
 
 
-async def call_claude(system_prompt: Optional[str], conversation: list[dict], model: str) -> str:
+def _resolve_effort(reasoning: Optional[dict]) -> Optional[str]:
+    """Resolve effort level: per-request reasoning field > startup default > None.
+
+    The CHIM connector sends a reasoning object like:
+      {"enabled": true, "effort": "medium", "exclude": true}
+    or for Anthropic-style:
+      {"enabled": true, "max_tokens": 1024, "exclude": true}
+
+    For Claude CLI, we map to --effort (low/medium/high).
+    CHIM's "minimal" maps to "low" since Claude CLI doesn't have "minimal".
+    """
+    effort = None
+
+    # Extract from per-request reasoning field
+    if reasoning and isinstance(reasoning, dict):
+        if reasoning.get("enabled", False):
+            raw = reasoning.get("effort")
+            if raw:
+                raw = str(raw).lower()
+                # CHIM uses "minimal" which Claude CLI doesn't support → map to "low"
+                effort = {"minimal": "low", "low": "low", "medium": "medium", "high": "high"}.get(raw)
+
+    # Fall back to startup default
+    if not effort and EFFORT_LEVEL:
+        effort = EFFORT_LEVEL
+
+    return effort
+
+
+async def call_claude(system_prompt: Optional[str], conversation: list[dict], model: str, effort: Optional[str] = None) -> str:
     """
     Spawn claude -p in a per-request temp dir with CLAUDE.md for the system prompt.
 
@@ -514,12 +556,13 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
       - --system-prompt flag → short roleplay directive only (controls API system blocks)
     """
     prompt = _format_prompt(conversation)
-    cmd = _build_cmd(model)
+    cmd = _build_cmd(model, effort)
 
     request_id = uuid.uuid4().hex[:8]
     sys_len = len(system_prompt) if system_prompt else 0
+    effort_str = f", effort={effort}" if effort else ""
     logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, "
-                f"{sys_len} chars system, {len(prompt)} chars dialogue)")
+                f"{sys_len} chars system, {len(prompt)} chars dialogue{effort_str})")
     start = time.time()
 
     # Per-request isolation: each NPC gets its own temp dir + CLAUDE.md
@@ -587,17 +630,18 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
     return text
 
 
-async def call_claude_streaming(system_prompt: Optional[str], conversation: list[dict], model: str):
+async def call_claude_streaming(system_prompt: Optional[str], conversation: list[dict], model: str, effort: Optional[str] = None):
     """Streaming wrapper: get full response then emit as OpenAI SSE chunks."""
     request_id = uuid.uuid4().hex[:8]
     cmpl_id = f"chatcmpl-{uuid.uuid4().hex[:16]}"
     created = int(time.time())
 
-    logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, stream)")
+    effort_str = f", effort={effort}" if effort else ""
+    logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, stream{effort_str})")
     start = time.time()
 
     # Get complete response (reliable across platforms)
-    response = await call_claude(system_prompt, conversation, model)
+    response = await call_claude(system_prompt, conversation, model, effort)
 
     # Role chunk
     role_chunk = {
@@ -668,6 +712,11 @@ async def chat_completions(req: ChatRequest):
     model = req.model or DEFAULT_MODEL
     system_prompt, conversation, npc_name = _extract_messages(req.messages, req.npc_name)
 
+    # Resolve effort level: per-request reasoning field > startup default
+    # The CHIM connector sends reasoning as: {"enabled": true, "effort": "medium", ...}
+    reasoning = getattr(req, "reasoning", None)
+    effort = _resolve_effort(reasoning)
+
     if not conversation:
         raise HTTPException(status_code=400, detail="No user/assistant messages provided")
 
@@ -691,12 +740,12 @@ async def chat_completions(req: ChatRequest):
 
     if req.stream:
         return StreamingResponse(
-            call_claude_streaming(system_prompt, merged, model),
+            call_claude_streaming(system_prompt, merged, model, effort),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    response = await call_claude(system_prompt, merged, model)
+    response = await call_claude(system_prompt, merged, model, effort)
     if not response:
         raise HTTPException(status_code=500, detail="Empty response from Claude")
 
@@ -747,6 +796,7 @@ async def health():
         "status": "healthy",
         "mode": "subprocess (legitimate)",
         "content_format": CONTENT_FORMAT,
+        "effort_level": EFFORT_LEVEL or "auto (per-request)",
         "claude_path": CLAUDE_PATH,
         "work_dir": "per-request temp dirs",
         "max_concurrent": MAX_CONCURRENT,
@@ -857,6 +907,10 @@ async def dashboard():
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px">
       <div><span class="label">Content Format</span><br>
         <span class="value" style="color:#67e8f9">{CONTENT_FORMAT}</span></div>
+      <div><span class="label">Effort Level</span><br>
+        <span class="value" style="color:#67e8f9">{EFFORT_LEVEL or "auto (per-request)"}</span></div>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px">
       <div><span class="label">NPC Name</span><br>
         <span class="value" style="color:#67e8f9">auto-detect (or npc_name field)</span></div>
     </div>
@@ -874,6 +928,8 @@ async def dashboard():
         <td class="value" style="color:#4ade80">single response, no tool loops</td></tr>
       <tr><td class="label">--system-prompt</td>
         <td class="value" style="color:#4ade80">short roleplay directive (API system blocks)</td></tr>
+      <tr><td class="label">--effort</td>
+        <td class="value" style="color:#4ade80">thinking depth (from connector or startup default)</td></tr>
       <tr><td class="label">CLAUDE.md per request</td>
         <td class="value" style="color:#4ade80">NPC bio &rarr; &lt;system-reminder&gt; with authority framing</td></tr>
       <tr><td class="label">stdin</td>
@@ -946,6 +1002,18 @@ if __name__ == "__main__":
     CONTENT_FORMAT = "flat" if choice == "2" else "array"
     logger.info(f"Content format: {CONTENT_FORMAT}")
 
+    print("\n  Effort level (controls thinking depth via --effort flag):")
+    print("    [1] Low    — minimal reasoning, fastest responses")
+    print("    [2] Medium — balanced reasoning (recommended)")
+    print("    [3] High   — thorough reasoning, slower responses")
+    print("    [4] Auto   — no default; use per-request reasoning from connector")
+    effort_choice = input("\n  Select effort [1/2/3/4] (default: 4): ").strip()
+    EFFORT_LEVEL = {"1": "low", "2": "medium", "3": "high"}.get(effort_choice)
+    if EFFORT_LEVEL:
+        logger.info(f"Default effort level: {EFFORT_LEVEL}")
+    else:
+        logger.info("Default effort level: auto (per-request from connector, or none)")
+
     host = "0.0.0.0"
     port = 8000
 
@@ -986,6 +1054,7 @@ if __name__ == "__main__":
     proxy_url = f"http://{primary_ip}:{port}/v1/chat/completions"
 
     print(f"\n  Content format: {CONTENT_FORMAT}")
+    print(f"  Effort level:  {EFFORT_LEVEL or 'auto (per-request)'}")
     print(f"  NPC name: auto-detected from system prompt (or pass 'npc_name' in request body)")
     print()
     print("  " + "=" * 60)
