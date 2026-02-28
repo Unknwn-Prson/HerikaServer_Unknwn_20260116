@@ -653,18 +653,8 @@ class ChatRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app):
-    logger.info("Proxy ready — capturing system prompt on first startup...")
-    # Fire-and-forget system prompt capture (don't block startup)
-    asyncio.create_task(_startup_capture())
+    logger.info("Proxy ready — use /debug/system-prompt?refresh=true to capture system prompt on demand")
     yield
-
-
-async def _startup_capture():
-    """Capture system prompt in background after startup."""
-    try:
-        await capture_system_prompt()
-    except Exception as e:
-        logger.warning(f"Startup system prompt capture failed: {e}")
 
 
 app = FastAPI(title="Claude SkyrimNet Proxy", lifespan=lifespan)
