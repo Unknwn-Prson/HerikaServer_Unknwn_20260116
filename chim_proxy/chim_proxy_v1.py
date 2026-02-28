@@ -943,6 +943,21 @@ if __name__ == "__main__":
     choice = input("\n  Select format [1/2] (default: 1): ").strip()
     CONTENT_FORMAT = "flat" if choice == "2" else "array"
     logger.info(f"Content format: {CONTENT_FORMAT}")
+
+    host = "0.0.0.0"
+    port = 8000
+    proxy_url = f"http://127.0.0.1:{port}/v1/chat/completions"
+
     print(f"\n  Content format: {CONTENT_FORMAT}")
-    print(f"  NPC name: auto-detected from system prompt (or pass 'npc_name' in request body)\n")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    print(f"  NPC name: auto-detected from system prompt (or pass 'npc_name' in request body)")
+    print()
+    print("  " + "=" * 56)
+    print(f"    CHIM Proxy URL:  {proxy_url}")
+    print("  " + "=" * 56)
+    print(f"    Dashboard:       http://127.0.0.1:{port}/")
+    print(f"    Models:          http://127.0.0.1:{port}/v1/models")
+    print(f"    Health:          http://127.0.0.1:{port}/health")
+    print("  " + "=" * 56)
+    print()
+
+    uvicorn.run(app, host=host, port=port)
