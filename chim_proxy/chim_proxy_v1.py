@@ -22,11 +22,13 @@ Context minimization (applied per request):
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1  → skip telemetry/update checks
     DISABLE_NON_ESSENTIAL_MODEL_CALLS=1         → skip warmup/background model calls
 
-Full API body capture:
-  Each request is routed through a per-request local HTTP proxy that
-  intercepts the actual API call from the Claude Code SDK.  The full
-  request body (system blocks, messages, metadata, thinking config, tools)
-  is logged to logs/requests.log alongside the response.
+Full API body capture (optional, disabled by default):
+  When CAPTURE_REQUESTS=True, each request is routed through a per-request
+  local HTTP proxy that intercepts the actual API call.  The full request
+  body (system blocks, messages, metadata, thinking config, tools) is
+  logged to logs/requests.log.  When disabled, requests.log still logs the
+  CLAUDE.md content and stdin we sent to the CLI.
+  The startup capture on /debug/system-prompt always uses the proxy.
 
 Performance notes:
   Each request spawns a subprocess (~1-3s overhead for CLI init + API call)
@@ -114,6 +116,11 @@ CONTENT_FORMAT = "flat"
 # Effort level: "low", "medium", "high", or None (let model decide)
 # Set interactively at startup via __main__; can be overridden per-request via reasoning field
 EFFORT_LEVEL = None
+
+# Whether to route each request through a local capture proxy to log the full API body.
+# Disabled by default — enable for debugging.  The startup capture on /debug/system-prompt
+# always uses the capture proxy regardless of this flag.
+CAPTURE_REQUESTS = False
 
 
 # ---------------------------------------------------------------------------
@@ -492,12 +499,13 @@ async def capture_system_prompt(model: str = DEFAULT_MODEL) -> Optional[str]:
 
 
 def _log_request(request_id: str, model: str, api_body: Optional[dict],
+                  claude_md: Optional[str], stdin: str,
                   response: str, elapsed: float):
-    """Append the full API request body + response to logs/requests.log.
+    """Append request + response to logs/requests.log.
 
-    api_body is the raw JSON body intercepted from the Claude Code CLI's
-    actual API call — it contains everything the LLM sees: system blocks,
-    messages, metadata, thinking config, tools, etc.
+    If api_body is available (capture proxy was active), the full intercepted
+    API body is logged — system blocks, messages, metadata, thinking, etc.
+    Otherwise, falls back to logging the CLAUDE.md and stdin we sent to the CLI.
     """
     sep = "=" * 72
     parts = [
@@ -510,11 +518,18 @@ def _log_request(request_id: str, model: str, api_body: Optional[dict],
     if api_body:
         parts.append(_format_api_body(api_body))
     else:
-        parts.append("(no API body captured)")
+        parts.extend([
+            "",
+            "--- CLAUDE.MD (system prompt written to temp dir) ---",
+            claude_md or "(none)",
+            "",
+            "--- STDIN (conversation piped to claude -p) ---",
+            stdin,
+        ])
 
     parts.extend([
         "",
-        f"{sep}",
+        sep,
         "RESPONSE",
         sep,
         response,
@@ -592,16 +607,14 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
     """
     Spawn claude -p in a per-request temp dir with CLAUDE.md for the system prompt.
 
-    Each request is routed through a per-request capture proxy so the full
-    API body (system blocks, messages, metadata, thinking config, etc.) is
-    intercepted and logged to requests.log.
-
     Architecture:
       - system_prompt (from CHIM) → written as CLAUDE.md in an isolated temp dir
         → Claude Code auto-loads it as a <system-reminder> with authority framing
       - conversation messages → piped to stdin (just the dialogue, no system prompt)
       - --system-prompt flag → short roleplay directive only (controls API system blocks)
-      - ANTHROPIC_BASE_URL → per-request local proxy for full API body capture
+
+    Optionally routes through a per-request capture proxy (CAPTURE_REQUESTS=True)
+    to log the full API body to requests.log.  Disabled by default for reliability.
     """
     prompt = _format_prompt(conversation)
     cmd = _build_cmd(model, effort)
@@ -614,10 +627,19 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
     logger.debug(f"[{request_id}] cmd: {' '.join(repr(c) for c in cmd)}")
     start = time.time()
 
-    # Per-request capture proxy — intercepts the actual API call
-    proxy, proxy_port, storage, proxy_thread = _start_capture_proxy()
-    env = _ENV.copy()
-    env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{proxy_port}"
+    # Optional per-request capture proxy
+    proxy = proxy_thread = storage = None
+    env = _ENV
+    if CAPTURE_REQUESTS:
+        try:
+            proxy, proxy_port, storage, proxy_thread = _start_capture_proxy()
+            env = _ENV.copy()
+            env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{proxy_port}"
+            logger.debug(f"[{request_id}] Capture proxy on port {proxy_port}")
+        except Exception as e:
+            logger.warning(f"[{request_id}] Capture proxy failed to start: {e} — proceeding without capture")
+            proxy = proxy_thread = storage = None
+            env = _ENV
 
     # Per-request isolation: each NPC gets its own temp dir + CLAUDE.md
     req_dir = tempfile.mkdtemp(prefix=f"claude-req-{request_id}-")
@@ -640,8 +662,10 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
             )
     finally:
         shutil.rmtree(req_dir, ignore_errors=True)
-        proxy.shutdown()
-        proxy_thread.join(timeout=5)
+        if proxy:
+            proxy.shutdown()
+        if proxy_thread:
+            proxy_thread.join(timeout=5)
 
     elapsed = time.time() - start
     raw = stdout.decode("utf-8", errors="replace").strip()
@@ -680,16 +704,16 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
 
     logger.info(f"[{request_id}] <- {len(text)} chars ({elapsed:.1f}s)")
 
-    # Parse captured API body for the log
+    # Parse captured API body for the log (if capture was active)
     api_body = None
-    if storage["body"]:
+    if storage and storage["body"]:
         try:
             api_body = json.loads(storage["body"])
         except json.JSONDecodeError:
             logger.warning(f"[{request_id}] Captured API body was not valid JSON")
 
-    # --- Per-request full API body log ---
-    _log_request(request_id, model, api_body, text, elapsed)
+    # --- Per-request log (full API body if captured, otherwise what we have) ---
+    _log_request(request_id, model, api_body, system_prompt, prompt, text, elapsed)
 
     return text
 
@@ -881,6 +905,7 @@ async def health():
         "mode": "subprocess (legitimate)",
         "content_format": CONTENT_FORMAT,
         "effort_level": EFFORT_LEVEL or "auto (per-request)",
+        "capture_requests": CAPTURE_REQUESTS,
         "claude_path": CLAUDE_PATH,
         "work_dir": "per-request temp dirs",
         "max_concurrent": MAX_CONCURRENT,
@@ -1100,6 +1125,17 @@ if __name__ == "__main__":
     else:
         logger.info("Default effort level: auto (per-request from connector, or none)")
 
+    print("\n  Request capture (route each request through a local proxy to log")
+    print("  the full API body — system blocks, messages, metadata, thinking):")
+    print("    [1] Off — log CLAUDE.md + stdin only (default, most reliable)")
+    print("    [2] On  — capture full API body via per-request proxy (debug)")
+    capture_choice = input("\n  Enable capture [1/2] (default: 1): ").strip()
+    CAPTURE_REQUESTS = capture_choice == "2"
+    if CAPTURE_REQUESTS:
+        logger.info("Request capture: ON (full API body via per-request proxy)")
+    else:
+        logger.info("Request capture: OFF (logging CLAUDE.md + stdin)")
+
     host = "0.0.0.0"
     port = 8000
 
@@ -1126,8 +1162,9 @@ if __name__ == "__main__":
 
     proxy_url = f"http://127.0.0.1:{port}/v1/chat/completions"
 
-    print(f"\n  Content format: {CONTENT_FORMAT}")
-    print(f"  Effort level:  {EFFORT_LEVEL or 'auto (per-request)'}")
+    print(f"\n  Content format:   {CONTENT_FORMAT}")
+    print(f"  Effort level:    {EFFORT_LEVEL or 'auto (per-request)'}")
+    print(f"  Request capture: {'ON' if CAPTURE_REQUESTS else 'OFF'}")
     print(f"  NPC name: auto-detected from system prompt (or pass 'npc_name' in request body)")
     print()
     print("  " + "=" * 60)
