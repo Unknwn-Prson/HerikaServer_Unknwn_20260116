@@ -22,8 +22,15 @@ Context minimization (applied per request):
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1  → skip telemetry/update checks
     DISABLE_NON_ESSENTIAL_MODEL_CALLS=1         → skip warmup/background model calls
 
+Full API body capture:
+  Each request is routed through a per-request local HTTP proxy that
+  intercepts the actual API call from the Claude Code SDK.  The full
+  request body (system blocks, messages, metadata, thinking config, tools)
+  is logged to logs/requests.log alongside the response.
+
 Performance notes:
-  Each request spawns a subprocess (~1-3s overhead for CLI init + API call).
+  Each request spawns a subprocess (~1-3s overhead for CLI init + API call)
+  plus a lightweight per-request HTTP proxy for API body capture.
   Concurrency is limited by MAX_CONCURRENT semaphore.
   No persistent connection reuse — each subprocess opens its own connection.
 
@@ -262,12 +269,7 @@ def _format_prompt(conversation: list[dict]) -> str:
 # Claude CLI subprocess interface
 # ---------------------------------------------------------------------------
 
-BASE_SYSTEM_PROMPT = (
-    "You are roleplaying a character in Skyrim. "
-    "Follow the character definition provided in your context exactly. "
-    "Stay in character at all times. Respond only as the character. "
-    "Do not break character or reference being an AI."
-)
+BASE_SYSTEM_PROMPT = "Let's roleplay in the world of Skyrim."
 
 # File where the captured real system prompt is written
 # Log dir next to this .py file (visible from Windows desktop)
@@ -285,52 +287,64 @@ REQUEST_LOG = LOG_DIR / "requests.log"
 _ANTHROPIC_API_HOST = "api.anthropic.com"
 
 
-class _CaptureHandler(http.server.BaseHTTPRequestHandler):
-    """Tiny HTTP proxy that captures the POST body and forwards to Anthropic."""
-    captured_body: bytes = b""
+def _make_capture_handler(storage: dict):
+    """Create a capture handler class that stores the POST body in `storage`."""
 
-    def log_message(self, *args):
-        pass  # suppress default http.server logging
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
 
-    def _forward(self, method: str):
-        length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length) if length else b""
-        if method == "POST":
-            _CaptureHandler.captured_body = body
+        def _forward(self, method: str):
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length) if length else b""
+            if method == "POST":
+                storage["body"] = body
 
-        # Rebuild headers for the real API
-        fwd = {}
-        for key, val in self.headers.items():
-            if key.lower() != "host":
-                fwd[key] = val
-        fwd["Host"] = _ANTHROPIC_API_HOST
+            fwd = {}
+            for key, val in self.headers.items():
+                if key.lower() != "host":
+                    fwd[key] = val
+            fwd["Host"] = _ANTHROPIC_API_HOST
 
-        try:
-            conn = http.client.HTTPSConnection(_ANTHROPIC_API_HOST)
-            conn.request(method, self.path, body or None, fwd)
-            resp = conn.getresponse()
-            resp_body = resp.read()
+            try:
+                conn = http.client.HTTPSConnection(_ANTHROPIC_API_HOST)
+                conn.request(method, self.path, body or None, fwd)
+                resp = conn.getresponse()
+                resp_body = resp.read()
 
-            self.send_response(resp.status)
-            for key, val in resp.getheaders():
-                if key.lower() not in ("transfer-encoding", "content-length"):
-                    self.send_header(key, val)
-            self.send_header("Content-Length", str(len(resp_body)))
-            self.end_headers()
-            self.wfile.write(resp_body)
-            conn.close()
-        except Exception as e:
-            err = f"Proxy forward error: {e}".encode()
-            self.send_response(502)
-            self.send_header("Content-Length", str(len(err)))
-            self.end_headers()
-            self.wfile.write(err)
+                self.send_response(resp.status)
+                for key, val in resp.getheaders():
+                    if key.lower() not in ("transfer-encoding", "content-length"):
+                        self.send_header(key, val)
+                self.send_header("Content-Length", str(len(resp_body)))
+                self.end_headers()
+                self.wfile.write(resp_body)
+                conn.close()
+            except Exception as e:
+                err = f"Proxy forward error: {e}".encode()
+                self.send_response(502)
+                self.send_header("Content-Length", str(len(err)))
+                self.end_headers()
+                self.wfile.write(err)
 
-    def do_POST(self):
-        self._forward("POST")
+        def do_POST(self):
+            self._forward("POST")
 
-    def do_GET(self):
-        self._forward("GET")
+        def do_GET(self):
+            self._forward("GET")
+
+    return _Handler
+
+
+def _start_capture_proxy() -> tuple:
+    """Start a per-request capture proxy. Returns (server, port, storage)."""
+    storage = {"body": b""}
+    handler = _make_capture_handler(storage)
+    server = http.server.HTTPServer(("127.0.0.1", 0), handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, port, storage, thread
 
 
 def _format_api_body(api_body: dict) -> str:
@@ -407,19 +421,13 @@ def _format_api_body(api_body: dict) -> str:
     return "\n".join(lines)
 
 
-async def capture_system_prompt(model: str = "claude-haiku-4-5-20251001") -> Optional[str]:
+async def capture_system_prompt(model: str = DEFAULT_MODEL) -> Optional[str]:
     """
     Capture the FULL API request body by routing Claude CLI through a local
     HTTP proxy.  Sets ANTHROPIC_BASE_URL so the SDK sends the request to us
     instead of api.anthropic.com; we log it, then forward it to the real API.
     """
-    _CaptureHandler.captured_body = b""
-
-    # Start local proxy on a random port
-    proxy = http.server.HTTPServer(("127.0.0.1", 0), _CaptureHandler)
-    port = proxy.server_address[1]
-    proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
-    proxy_thread.start()
+    proxy, port, storage, proxy_thread = _start_capture_proxy()
     logger.info(f"Capture proxy listening on 127.0.0.1:{port}")
 
     # Run claude CLI with our proxy as the API endpoint
@@ -459,16 +467,16 @@ async def capture_system_prompt(model: str = "claude-haiku-4-5-20251001") -> Opt
         proxy_thread.join(timeout=5)
 
     # Parse what we captured
-    if not _CaptureHandler.captured_body:
+    if not storage["body"]:
         msg = "No API request was captured — the proxy may not have been reached."
         logger.warning(msg)
         SYSTEM_PROMPT_LOG.write_text(msg, encoding="utf-8")
         return msg
 
     try:
-        api_body = json.loads(_CaptureHandler.captured_body)
+        api_body = json.loads(storage["body"])
     except json.JSONDecodeError:
-        raw = _CaptureHandler.captured_body.decode(errors="replace")
+        raw = storage["body"].decode(errors="replace")
         result = f"RAW CAPTURED BODY (not valid JSON):\n\n{raw}"
         SYSTEM_PROMPT_LOG.write_text(result, encoding="utf-8")
         logger.warning("Captured body was not valid JSON")
@@ -483,23 +491,38 @@ async def capture_system_prompt(model: str = "claude-haiku-4-5-20251001") -> Opt
     return result
 
 
-def _log_request(request_id: str, model: str, claude_md: Optional[str],
-                  stdin: str, response: str, elapsed: float):
-    """Append a full request/response record to logs/requests.log."""
+def _log_request(request_id: str, model: str, api_body: Optional[dict],
+                  response: str, elapsed: float):
+    """Append the full API request body + response to logs/requests.log.
+
+    api_body is the raw JSON body intercepted from the Claude Code CLI's
+    actual API call — it contains everything the LLM sees: system blocks,
+    messages, metadata, thinking config, tools, etc.
+    """
     sep = "=" * 72
-    entry = (
-        f"\n{sep}\n"
+    parts = [
+        f"\n{sep}",
         f"REQUEST {request_id}  |  {time.strftime('%Y-%m-%d %H:%M:%S')}  |  "
-        f"{model}  |  {elapsed:.1f}s\n"
-        f"{sep}\n"
-        f"\n--- CLAUDE.MD (system prompt written to temp dir) ---\n"
-        f"{claude_md or '(none)'}\n"
-        f"\n--- STDIN (conversation piped to claude -p) ---\n"
-        f"{stdin}\n"
-        f"\n--- RESPONSE ---\n"
-        f"{response}\n"
-        f"\n{sep}\n"
-    )
+        f"{model}  |  {elapsed:.1f}s",
+        sep,
+    ]
+
+    if api_body:
+        parts.append(_format_api_body(api_body))
+    else:
+        parts.append("(no API body captured)")
+
+    parts.extend([
+        "",
+        f"{sep}",
+        "RESPONSE",
+        sep,
+        response,
+        "",
+        sep,
+    ])
+
+    entry = "\n".join(parts) + "\n"
     try:
         with open(REQUEST_LOG, "a", encoding="utf-8") as f:
             f.write(entry)
@@ -569,11 +592,16 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
     """
     Spawn claude -p in a per-request temp dir with CLAUDE.md for the system prompt.
 
+    Each request is routed through a per-request capture proxy so the full
+    API body (system blocks, messages, metadata, thinking config, etc.) is
+    intercepted and logged to requests.log.
+
     Architecture:
       - system_prompt (from CHIM) → written as CLAUDE.md in an isolated temp dir
         → Claude Code auto-loads it as a <system-reminder> with authority framing
       - conversation messages → piped to stdin (just the dialogue, no system prompt)
       - --system-prompt flag → short roleplay directive only (controls API system blocks)
+      - ANTHROPIC_BASE_URL → per-request local proxy for full API body capture
     """
     prompt = _format_prompt(conversation)
     cmd = _build_cmd(model, effort)
@@ -585,6 +613,11 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
                 f"{sys_len} chars system, {len(prompt)} chars dialogue{effort_str})")
     logger.debug(f"[{request_id}] cmd: {' '.join(repr(c) for c in cmd)}")
     start = time.time()
+
+    # Per-request capture proxy — intercepts the actual API call
+    proxy, proxy_port, storage, proxy_thread = _start_capture_proxy()
+    env = _ENV.copy()
+    env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{proxy_port}"
 
     # Per-request isolation: each NPC gets its own temp dir + CLAUDE.md
     req_dir = tempfile.mkdtemp(prefix=f"claude-req-{request_id}-")
@@ -599,7 +632,7 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=_ENV,
+                env=env,
                 cwd=req_dir,
             )
             stdout, stderr = await asyncio.wait_for(
@@ -607,6 +640,8 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
             )
     finally:
         shutil.rmtree(req_dir, ignore_errors=True)
+        proxy.shutdown()
+        proxy_thread.join(timeout=5)
 
     elapsed = time.time() - start
     raw = stdout.decode("utf-8", errors="replace").strip()
@@ -645,8 +680,16 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
 
     logger.info(f"[{request_id}] <- {len(text)} chars ({elapsed:.1f}s)")
 
-    # --- Per-request prompt log ---
-    _log_request(request_id, model, system_prompt, prompt, text, elapsed)
+    # Parse captured API body for the log
+    api_body = None
+    if storage["body"]:
+        try:
+            api_body = json.loads(storage["body"])
+        except json.JSONDecodeError:
+            logger.warning(f"[{request_id}] Captured API body was not valid JSON")
+
+    # --- Per-request full API body log ---
+    _log_request(request_id, model, api_body, text, elapsed)
 
     return text
 
