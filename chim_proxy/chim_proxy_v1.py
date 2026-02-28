@@ -50,6 +50,7 @@ import os
 import re
 import shutil
 import socket
+import sys
 import tempfile
 import threading
 import time
@@ -947,6 +948,27 @@ if __name__ == "__main__":
 
     host = "0.0.0.0"
     port = 8000
+
+    # Check if port is available; if not, try the next few ports
+    def _port_available(h, p):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind((h, p))
+                return True
+            except OSError:
+                return False
+
+    if not _port_available(host, port):
+        original_port = port
+        for candidate in range(port + 1, port + 20):
+            if _port_available(host, candidate):
+                port = candidate
+                break
+        if port == original_port:
+            print(f"\n  ERROR: Port {port} is in use and no free port found in range {port}–{port+19}.")
+            print("  Close the process using the port, or try again.")
+            sys.exit(1)
+        print(f"\n  NOTE: Port {original_port} is in use — using port {port} instead.")
 
     # Detect real LAN/WSL IP addresses (not just localhost)
     local_ips = []
