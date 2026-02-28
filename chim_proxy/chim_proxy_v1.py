@@ -56,6 +56,7 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -1068,5 +1069,36 @@ if __name__ == "__main__":
     print(f"    Health:      http://{primary_ip}:{port}/health")
     print("  " + "=" * 60)
     print()
+
+    # --- Windows firewall keepalive ----------------------------------------
+    # Re-applies the inbound allow rule every 5 minutes so Windows doesn't
+    # silently drop it (profile changes, sleep/wake, etc.).
+    def _firewall_keepalive(listen_port: int):
+        if sys.platform != "win32":
+            return
+        rule_name = "CHIM Proxy"
+        while True:
+            try:
+                # Delete + re-add is idempotent and handles port changes
+                subprocess.run(
+                    ["netsh", "advfirewall", "firewall", "delete", "rule",
+                     f"name={rule_name}"],
+                    capture_output=True, timeout=10,
+                )
+                subprocess.run(
+                    ["netsh", "advfirewall", "firewall", "add", "rule",
+                     f"name={rule_name}", "dir=in", "action=allow",
+                     "protocol=TCP", f"localport={listen_port}"],
+                    capture_output=True, timeout=10,
+                )
+            except Exception as exc:
+                logger.debug(f"Firewall refresh failed: {exc}")
+            time.sleep(300)  # every 5 minutes
+
+    fw_thread = threading.Thread(
+        target=_firewall_keepalive, args=(port,), daemon=True
+    )
+    fw_thread.start()
+    # -----------------------------------------------------------------------
 
     uvicorn.run(app, host=host, port=port)
