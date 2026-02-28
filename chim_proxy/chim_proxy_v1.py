@@ -49,6 +49,7 @@ import logging
 import os
 import re
 import shutil
+import socket
 import tempfile
 import threading
 import time
@@ -946,18 +947,35 @@ if __name__ == "__main__":
 
     host = "0.0.0.0"
     port = 8000
-    proxy_url = f"http://127.0.0.1:{port}/v1/chat/completions"
+
+    # Detect real LAN/WSL IP addresses (not just localhost)
+    local_ips = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127."):
+                if ip not in local_ips:
+                    local_ips.append(ip)
+    except Exception:
+        pass
+
+    # Primary IP: first detected LAN address, fallback to localhost
+    primary_ip = local_ips[0] if local_ips else "127.0.0.1"
+    proxy_url = f"http://{primary_ip}:{port}/v1/chat/completions"
 
     print(f"\n  Content format: {CONTENT_FORMAT}")
     print(f"  NPC name: auto-detected from system prompt (or pass 'npc_name' in request body)")
     print()
-    print("  " + "=" * 56)
-    print(f"    CHIM Proxy URL:  {proxy_url}")
-    print("  " + "=" * 56)
-    print(f"    Dashboard:       http://127.0.0.1:{port}/")
-    print(f"    Models:          http://127.0.0.1:{port}/v1/models")
-    print(f"    Health:          http://127.0.0.1:{port}/health")
-    print("  " + "=" * 56)
+    print("  " + "=" * 60)
+    print(f"    Proxy URL:   {proxy_url}")
+    if len(local_ips) > 1:
+        for ip in local_ips[1:]:
+            print(f"                 http://{ip}:{port}/v1/chat/completions")
+    print(f"    Localhost:   http://127.0.0.1:{port}/v1/chat/completions")
+    print("  " + "-" * 60)
+    print(f"    Dashboard:   http://{primary_ip}:{port}/")
+    print(f"    Health:      http://{primary_ip}:{port}/health")
+    print("  " + "=" * 60)
     print()
 
     uvicorn.run(app, host=host, port=port)
