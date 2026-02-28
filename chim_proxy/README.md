@@ -119,6 +119,33 @@ The model is specified per-request by CHIM — no need to restart the proxy to s
 - Expected — Opus is the most capable but takes 5-15 seconds vs 2-5 for Sonnet
 - Switch to Sonnet in your CHIM connector if speed matters more
 
+## Terms of Service Considerations
+
+This proxy uses `claude --print` — the official Claude Code CLI's scripted/non-interactive mode — to process each request. All API calls go through the genuine `claude` binary, which handles its own authentication, rate limiting, and telemetry natively. No tokens are intercepted, no credentials are extracted, and no client identity is spoofed.
+
+### What's clearly legitimate
+
+- **`claude --print`** is explicitly designed for scripted and automated use. It's the standard interface for CI/CD pipelines, git hooks, and shell automation.
+- **`--tools=`, `--system-prompt`, `--disable-slash-commands`, `--max-turns`** are documented CLI flags. Using them is supported behavior.
+- **Writing `CLAUDE.md`** per project or context is a core Claude Code feature.
+- **Piping input via stdin** is the normal way to provide content to `claude -p` in scripts.
+- **Paying for a Max/Pro/Teams subscription** and using the CLI is straightforward legitimate usage.
+
+### What's gray
+
+The one open question is whether using `claude -p` for non-coding purposes (NPC dialogue in a game) falls outside the intended scope. Anthropic's Consumer ToS (Section 3.7) prohibits automated access **except** via an API key or "where we otherwise explicitly permit it." `claude --print` is explicitly provided for scripted use, but whether that permission is scoped to software development or covers any scripted use is not specified in the ToS. The Acceptable Use Policy restricts content (no illegal activity, harassment, etc.) but does not restrict use cases to coding.
+
+### Practical risk
+
+| Concern | Risk | Reasoning |
+|---------|------|-----------|
+| Automated detection | Near zero | Every request is a genuine `claude -p` invocation — real client, real auth, real telemetry |
+| Account action | Very low | Nothing to flag — the CLI is running exactly as designed |
+| Use-case restriction | Low | Restricting non-coding CLI use would affect thousands of legitimate automation users |
+| Rate limiting | Normal | Subject to the same limits as any Claude Code user |
+
+In short: this is off-label use of a legitimately paid product through its officially supported scripting interface. You should read [Anthropic's Terms of Service](https://www.anthropic.com/legal/consumer-terms) and [Acceptable Use Policy](https://www.anthropic.com/legal/aup) and make your own informed decision.
+
 ## License
 
 MIT
