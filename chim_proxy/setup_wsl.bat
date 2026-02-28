@@ -72,21 +72,21 @@ echo   [d] Claude Code CLI...
 wsl -d %DISTRO% -- bash -c "command -v claude >/dev/null && echo '       Found.' || (sudo npm install -g @anthropic-ai/claude-code 2>&1 && echo '       Installed.')"
 echo.
 
-:: ---- 4. Claude Code login ----
-echo [4/5] Claude Code authentication...
+:: ---- 4. Verify ----
+echo [4/5] Verifying installation...
+wsl -d %DISTRO% -- bash -c "echo '  Python:      '$(python3 --version 2>/dev/null || echo 'NOT FOUND')"
+wsl -d %DISTRO% -- bash -c "echo '  Claude Code: '$(claude --version 2>/dev/null || echo 'NOT FOUND')"
+wsl -d %DISTRO% -- bash -c "test -f /chim_proxy/chim_proxy_v1.py && echo '  Proxy files: OK' || echo '  Proxy files: MISSING'"
+echo.
+
+:: ---- 5. Claude Code login (LAST — blocks the script) ----
+echo [5/5] Claude Code authentication...
 echo       A browser window should open. Sign in with your Anthropic account.
 echo       (You need a Claude Pro, Max, or Teams subscription.)
 echo       After login, type /exit or press Ctrl+C to continue.
 echo.
 
 wsl -d %DISTRO% -- bash -c "command -v claude >/dev/null && claude login || echo '[WARN] claude not found - restart terminal and run: claude login'"
-echo.
-
-:: ---- 5. Verify ----
-echo [5/5] Verifying installation...
-wsl -d %DISTRO% -- bash -c "echo '  Python:      '$(python3 --version 2>/dev/null || echo 'NOT FOUND')"
-wsl -d %DISTRO% -- bash -c "echo '  Claude Code: '$(claude --version 2>/dev/null || echo 'NOT FOUND')"
-wsl -d %DISTRO% -- bash -c "test -f /chim_proxy/chim_proxy_v1.py && echo '  Proxy files: OK' || echo '  Proxy files: MISSING'"
 echo.
 
 echo ============================================================
