@@ -48,7 +48,7 @@ echo.
 :: 3. Install Python dependencies
 echo [3/7] Installing Python dependencies...
 cd /d "%~dp0"
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 if %errorlevel% neq 0 (
     echo [WARN] pip install had issues - you may need to fix manually
 ) else (
@@ -87,12 +87,13 @@ netsh advfirewall firewall show rule name="CHIM Proxy" >nul 2>&1
 if %errorlevel% equ 0 (
     echo       Rule already exists, skipping.
 ) else (
-    netsh advfirewall firewall add rule name="CHIM Proxy" ^
-        dir=in action=allow protocol=TCP localport=8000 >nul 2>&1
+    netsh advfirewall firewall add rule name="CHIM Proxy" dir=in action=allow protocol=TCP localport=8000 >nul 2>&1
     if %errorlevel% equ 0 (
         echo       Done!
     ) else (
-        echo [WARN] Failed to add firewall rule
+        echo [WARN] Failed to add firewall rule.
+        echo        You can add it manually in Windows Firewall settings
+        echo        or run: netsh advfirewall firewall add rule name="CHIM Proxy" dir=in action=allow protocol=TCP localport=8000
     )
 )
 echo.
