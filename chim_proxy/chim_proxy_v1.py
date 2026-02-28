@@ -82,6 +82,14 @@ if not CLAUDE_PATH:
     raise RuntimeError("claude CLI not found on PATH")
 logger.info(f"Using Claude CLI: {CLAUDE_PATH}")
 
+# Log version at import time so it's always visible
+try:
+    import subprocess as _sp
+    _ver = _sp.check_output([CLAUDE_PATH, "--version"], stderr=_sp.STDOUT, timeout=10).decode().strip()
+    logger.info(f"Claude Code version: {_ver}")
+except Exception as _e:
+    logger.warning(f"Could not determine Claude Code version: {_e}")
+
 # Per-request temp dirs are created in call_claude() — no shared WORK_DIR needed
 
 _semaphore = asyncio.Semaphore(MAX_CONCURRENT)
@@ -442,7 +450,7 @@ async def capture_system_prompt(model: str = "claude-haiku-4-5-20251001") -> Opt
             proc.communicate(input=b"Hello there."), timeout=60,
         )
         if stderr:
-            logger.debug(f"Capture stderr: {stderr.decode(errors='replace')[:500]}")
+            logger.info(f"Capture stderr: {stderr.decode(errors='replace')[:1000]}")
     except Exception as e:
         logger.warning(f"Capture CLI call failed: {e}")
     finally:
@@ -499,13 +507,25 @@ def _log_request(request_id: str, model: str, claude_md: Optional[str],
         logger.warning(f"[{request_id}] Failed to write request log: {e}")
 
 
+_ALL_TOOLS = [
+    "AskUserQuestion", "Bash", "Computer", "Edit", "EnterPlanMode",
+    "EnterWorktree", "ExitPlanMode", "Glob", "Grep", "LSP",
+    "NotebookEdit", "ReadFile", "SendMessageTool", "Skill", "Sleep",
+    "Task", "TaskCreate", "TodoWrite", "Agent", "Write",
+    "TeammateTool", "TeamDelete", "ToolSearch", "WebFetch", "WebSearch",
+    "NotebookRead",
+]
+
+
 def _build_cmd(model: str, effort: Optional[str] = None) -> list[str]:
     """Build claude CLI command with all context-minimization flags."""
     cmd = [
         CLAUDE_PATH, "-p",
-        "--tools=",                          # No tools → no tool descriptions in context
+        "--tools", "",                       # Disable all tools (documented format: --tools "")
+        "--disallowedTools",                 # Remove tool descriptions from model context entirely
+        *_ALL_TOOLS,
         "--disable-slash-commands",          # No skill descriptions in context
-        "--system-prompt", BASE_SYSTEM_PROMPT,  # Short directive (fits Windows 32K limit)
+        "--system-prompt", BASE_SYSTEM_PROMPT,
         "--model", model,
         "--output-format", "json",           # Single JSON result — reliable on all platforms
         "--max-turns", "1",                  # Single response, no tool loops
@@ -563,6 +583,7 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
     effort_str = f", effort={effort}" if effort else ""
     logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, "
                 f"{sys_len} chars system, {len(prompt)} chars dialogue{effort_str})")
+    logger.debug(f"[{request_id}] cmd: {' '.join(repr(c) for c in cmd)}")
     start = time.time()
 
     # Per-request isolation: each NPC gets its own temp dir + CLAUDE.md
@@ -592,7 +613,7 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
     err = stderr.decode("utf-8", errors="replace").strip()
 
     if err:
-        logger.debug(f"[{request_id}] stderr: {err[:500]}")
+        logger.warning(f"[{request_id}] stderr: {err[:1000]}")
 
     if proc.returncode != 0:
         logger.error(f"[{request_id}] exit {proc.returncode}: {err[:500]}")
@@ -699,7 +720,27 @@ class ChatRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app):
-    logger.info("Proxy ready — use /debug/system-prompt?refresh=true to capture system prompt on demand")
+    # Auto-capture what Claude Code actually sends to the API
+    logger.info("Running startup capture to verify context minimization...")
+    try:
+        result = await capture_system_prompt()
+        if result:
+            # Count system blocks to verify tools/skills are stripped
+            if SYSTEM_PROMPT_LOG.exists():
+                log_text = SYSTEM_PROMPT_LOG.read_text(encoding="utf-8", errors="replace")
+                n_blocks = log_text.count("System Block")
+                has_tools = "tool" in log_text.lower() and "disallowed" not in log_text.lower()
+                log_size = len(log_text)
+                logger.info(f"Capture complete: {n_blocks} system blocks, {log_size} chars total")
+                if has_tools:
+                    logger.warning("WARNING: Tool descriptions may still be present in context!")
+                    logger.warning("Check /debug/system-prompt for details")
+                else:
+                    logger.info("No tool descriptions detected — context looks clean")
+                logger.info(f"Full capture saved to: {SYSTEM_PROMPT_LOG}")
+    except Exception as e:
+        logger.warning(f"Startup capture failed: {e} — proxy will still work, check /debug/system-prompt manually")
+    logger.info("Proxy ready")
     yield
 
 
@@ -920,8 +961,10 @@ async def dashboard():
     <h3 style="margin:0 0 8px; font-size:0.85rem; color:#94a3b8; text-transform:uppercase;
                letter-spacing:0.05em">Context Minimization</h3>
     <table>
-      <tr><td class="label">--tools=</td>
-        <td class="value" style="color:#4ade80">all tool descriptions removed</td></tr>
+      <tr><td class="label">--tools ""</td>
+        <td class="value" style="color:#4ade80">all tools disabled</td></tr>
+      <tr><td class="label">--disallowedTools</td>
+        <td class="value" style="color:#4ade80">all {len(_ALL_TOOLS)} tool descriptions removed from context</td></tr>
       <tr><td class="label">--disable-slash-commands</td>
         <td class="value" style="color:#4ade80">skill descriptions removed</td></tr>
       <tr><td class="label">--max-turns 1</td>
