@@ -17,7 +17,7 @@ echo ============================================================
 echo.
 
 :: 1. Check for Git (required by Claude Code)
-echo [1/6] Checking for Git...
+echo [1/7] Checking for Git...
 where git >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Git is not installed!
@@ -32,7 +32,7 @@ if %errorlevel% neq 0 (
 echo.
 
 :: 2. Check for Python
-echo [2/6] Checking for Python...
+echo [2/7] Checking for Python...
 where python >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Python is not installed!
@@ -46,7 +46,7 @@ if %errorlevel% neq 0 (
 echo.
 
 :: 3. Install Python dependencies
-echo [3/6] Installing Python dependencies...
+echo [3/7] Installing Python dependencies...
 cd /d "%~dp0"
 pip install -r requirements.txt
 if %errorlevel% neq 0 (
@@ -57,7 +57,7 @@ if %errorlevel% neq 0 (
 echo.
 
 :: 4. Install Claude Code
-echo [4/6] Installing Claude Code...
+echo [4/7] Installing Claude Code...
 where claude >nul 2>&1
 if %errorlevel% equ 0 (
     echo       Claude Code is already installed.
@@ -82,7 +82,7 @@ if %errorlevel% equ 0 (
 echo.
 
 :: 5. Claude Code login
-echo [5/6] Claude Code authentication...
+echo [5/7] Claude Code authentication...
 where claude >nul 2>&1
 if %errorlevel% neq 0 (
     echo [WARN] 'claude' not found on PATH yet.
@@ -103,7 +103,7 @@ if %errorlevel% neq 0 (
 echo.
 
 :: 6. Windows Firewall rule (allow inbound on port 8000)
-echo [6/6] Adding Windows Firewall rule for port 8000...
+echo [6/7] Adding Windows Firewall rule for port 8000...
 netsh advfirewall firewall show rule name="CHIM Proxy" >nul 2>&1
 if %errorlevel% equ 0 (
     echo       Rule already exists, skipping.
@@ -118,13 +118,26 @@ if %errorlevel% equ 0 (
 )
 echo.
 
+:: 7. Port proxy so WSL can reach the proxy on Windows
+echo [7/7] Setting up port forwarding (WSL to Windows)...
+netsh interface portproxy delete v4tov4 listenport=8000 listenaddress=0.0.0.0 >nul 2>&1
+netsh interface portproxy add v4tov4 ^
+    listenport=8000 listenaddress=0.0.0.0 ^
+    connectport=8000 connectaddress=127.0.0.1
+if %errorlevel% equ 0 (
+    echo       Done!
+) else (
+    echo [WARN] Failed to add port proxy rule
+)
+echo.
+
 echo ============================================================
 echo  Setup complete!
 echo.
 echo  To start the proxy, run:
 echo    start_chim_proxy.bat
 echo.
-echo  Your endpoint will be:
-echo    http://127.0.0.1:8000/v1/chat/completions
+echo  Your endpoint (from WSL/HerikaServer):
+echo    http://172.17.144.1:8000/v1/chat/completions
 echo ============================================================
 pause
