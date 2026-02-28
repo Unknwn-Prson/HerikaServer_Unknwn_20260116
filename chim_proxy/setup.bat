@@ -81,29 +81,8 @@ if %errorlevel% equ 0 (
 )
 echo.
 
-:: 5. Claude Code login
-echo [5/7] Claude Code authentication...
-where claude >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [WARN] 'claude' not found on PATH yet.
-    echo        Restart your terminal and run: claude login
-    echo        You need a Claude Pro, Max, or Teams subscription.
-) else (
-    echo       Launching Claude Code login...
-    echo       A browser window should open. Sign in with your Anthropic account.
-    echo       (You need a Claude Pro, Max, or Teams subscription.)
-    echo.
-    claude login
-    if %errorlevel% neq 0 (
-        echo [WARN] Login may not have completed. You can retry with: claude login
-    ) else (
-        echo       Authenticated!
-    )
-)
-echo.
-
-:: 6. Windows Firewall rule (allow inbound on port 8000)
-echo [6/7] Adding Windows Firewall rule for port 8000...
+:: 5. Windows Firewall rule (allow inbound on port 8000)
+echo [5/7] Adding Windows Firewall rule for port 8000...
 netsh advfirewall firewall show rule name="CHIM Proxy" >nul 2>&1
 if %errorlevel% equ 0 (
     echo       Rule already exists, skipping.
@@ -118,8 +97,8 @@ if %errorlevel% equ 0 (
 )
 echo.
 
-:: 7. Port proxy so WSL can reach the proxy on Windows
-echo [7/7] Setting up port forwarding (WSL to Windows)...
+:: 6. Port proxy so WSL can reach the proxy on Windows
+echo [6/7] Setting up port forwarding (WSL to Windows)...
 netsh interface portproxy delete v4tov4 listenport=8000 listenaddress=0.0.0.0 >nul 2>&1
 netsh interface portproxy add v4tov4 ^
     listenport=8000 listenaddress=0.0.0.0 ^
@@ -128,6 +107,30 @@ if %errorlevel% equ 0 (
     echo       Done!
 ) else (
     echo [WARN] Failed to add port proxy rule
+)
+echo.
+
+:: 7. Claude Code login (last — opens interactive TUI that blocks the script)
+echo [7/7] Claude Code authentication...
+where claude >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [WARN] 'claude' not found on PATH yet.
+    echo        Restart your terminal and run: claude login
+    echo        You need a Claude Pro, Max, or Teams subscription.
+) else (
+    echo       Launching Claude Code login...
+    echo       A browser window should open. Sign in with your Anthropic account.
+    echo       (You need a Claude Pro, Max, or Teams subscription.)
+    echo.
+    echo       NOTE: This opens an interactive session. Once you are logged in,
+    echo       type /exit or press Ctrl+C to return to setup.
+    echo.
+    claude login
+    if %errorlevel% neq 0 (
+        echo [WARN] Login may not have completed. You can retry with: claude login
+    ) else (
+        echo       Authenticated!
+    )
 )
 echo.
 
