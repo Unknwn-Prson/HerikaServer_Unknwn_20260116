@@ -192,13 +192,23 @@ def _extract_messages(
     else:
         system_prompt = "\n\n".join(_flatten_content(c) for c in system_contents)
 
-    # Format conversation — flatten content and prepend NPC name to assistant turns
+    # Format conversation
     conversation = []
     for role, content in conversation_raw:
-        text = _flatten_content(content)
-        if role == "assistant" and npc_name and not text.lstrip().startswith(npc_name):
-            text = f"{npc_name}: {text}"
-        conversation.append({"role": role, "content": text})
+        if CONTENT_FORMAT == "array":
+            # Preserve block structure — each message keeps its content array
+            blocks = _content_to_blocks(content)
+            if role == "assistant" and npc_name:
+                for block in blocks:
+                    if not block["text"].lstrip().startswith(npc_name):
+                        block["text"] = f"{npc_name}: {block['text']}"
+            conversation.append({"role": role, "content": blocks})
+        else:
+            # Flat mode — flatten to plain text
+            text = _flatten_content(content)
+            if role == "assistant" and npc_name and not text.lstrip().startswith(npc_name):
+                text = f"{npc_name}: {text}"
+            conversation.append({"role": role, "content": text})
 
     return system_prompt, conversation, npc_name
 
@@ -213,13 +223,8 @@ def _format_prompt(conversation: list[dict]) -> str:
         return "Hello."
 
     if CONTENT_FORMAT == "array":
-        messages = []
-        for msg in conversation:
-            messages.append({
-                "role": msg["role"],
-                "content": [{"type": "text", "text": msg["content"]}],
-            })
-        return json.dumps(messages, indent=2, ensure_ascii=False)
+        # Conversation is already in CHIM structure: [{role, content: [blocks]}, ...]
+        return json.dumps(conversation, indent=2, ensure_ascii=False)
 
     # Flat mode
     if len(conversation) == 1:
@@ -676,15 +681,21 @@ async def chat_completions(req: ChatRequest):
 
     # Ensure conversation starts with user
     if conversation[0]["role"] != "user":
-        conversation.insert(0, {"role": "user", "content": "Continue."})
-
-    # Merge consecutive same-role messages
-    merged = []
-    for msg in conversation:
-        if merged and merged[-1]["role"] == msg["role"]:
-            merged[-1]["content"] += "\n\n" + msg["content"]
+        if CONTENT_FORMAT == "array":
+            conversation.insert(0, {"role": "user", "content": [{"type": "text", "text": "Continue."}]})
         else:
-            merged.append(msg)
+            conversation.insert(0, {"role": "user", "content": "Continue."})
+
+    # Merge consecutive same-role messages (flat mode only — array mode preserves boundaries)
+    if CONTENT_FORMAT == "array":
+        merged = conversation
+    else:
+        merged = []
+        for msg in conversation:
+            if merged and merged[-1]["role"] == msg["role"]:
+                merged[-1]["content"] += "\n\n" + msg["content"]
+            else:
+                merged.append(msg)
 
     if req.stream:
         return StreamingResponse(
@@ -698,7 +709,12 @@ async def chat_completions(req: ChatRequest):
         raise HTTPException(status_code=500, detail="Empty response from Claude")
 
     # Rough token estimates (chars / 4)
-    prompt_text = (system_prompt or "") + " ".join(m["content"] for m in merged)
+    if CONTENT_FORMAT == "array":
+        prompt_text = (system_prompt or "") + " ".join(
+            " ".join(b["text"] for b in m["content"]) for m in merged
+        )
+    else:
+        prompt_text = (system_prompt or "") + " ".join(m["content"] for m in merged)
     prompt_tokens = len(prompt_text) // 4
     completion_tokens = len(response) // 4
 
