@@ -213,8 +213,13 @@ def _format_prompt(conversation: list[dict]) -> str:
         return "Hello."
 
     if CONTENT_FORMAT == "array":
-        blocks = [{"type": "text", "text": msg["content"]} for msg in conversation]
-        return json.dumps(blocks, indent=2, ensure_ascii=False)
+        messages = []
+        for msg in conversation:
+            messages.append({
+                "role": msg["role"],
+                "content": [{"type": "text", "text": msg["content"]}],
+            })
+        return json.dumps(messages, indent=2, ensure_ascii=False)
 
     # Flat mode
     if len(conversation) == 1:
