@@ -84,7 +84,7 @@ echo.
 
 :: 5. Ensure HTTP_TIMEOUT in HerikaServer conf.php is at least 30s
 echo [5/8] Checking HerikaServer HTTP_TIMEOUT...
-call "%~dp0ensure_timeout.bat"
+python "%~dp0ensure_timeout.py"
 echo.
 
 :: 6. Windows Firewall rule (allow inbound on port 8000)
