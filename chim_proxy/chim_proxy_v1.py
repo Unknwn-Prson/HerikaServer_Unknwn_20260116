@@ -22,29 +22,14 @@ Context minimization (applied per request):
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1  → skip telemetry/update checks
     DISABLE_NON_ESSENTIAL_MODEL_CALLS=1         → skip warmup/background model calls
 
-Full API body capture (optional, disabled by default):
-  When CAPTURE_REQUESTS=True, each request is routed through a per-request
-  local HTTP proxy that intercepts the actual API call.  The full request
-  body (system blocks, messages, metadata, thinking config, tools) is
-  logged to logs/requests.log.  When disabled, requests.log still logs the
-  CLAUDE.md content and stdin we sent to the CLI.
-  The startup capture on /debug/system-prompt always uses the proxy.
-
 Performance notes:
-  Each request spawns a subprocess (~1-3s overhead for CLI init + API call)
-  plus a lightweight per-request HTTP proxy for API body capture.
+  Each request spawns a subprocess (~1-3s overhead for CLI init + API call).
   Concurrency is limited by MAX_CONCURRENT semaphore.
   No persistent connection reuse — each subprocess opens its own connection.
 
 Content format (selectable at startup):
   Array mode  → preserves CHIM's block structure as JSON arrays in CLAUDE.md and stdin
   Flat mode   → flattens content to plain text (original behavior)
-
-Effort level (selectable at startup, overridable per-request):
-  Startup default → sets --effort flag on every CLI invocation
-  Per-request     → CHIM connector sends "reasoning" field with effort/thinking settings
-  Priority: per-request reasoning.effort > startup default > none
-  Mapping: CHIM "minimal" → CLI "low", "low"/"medium"/"high" pass through directly
 
 NPC name handling:
   Auto-detected from system prompt ("You are [Name]" / "Name: [Name]")
@@ -91,14 +76,6 @@ if not CLAUDE_PATH:
     raise RuntimeError("claude CLI not found on PATH")
 logger.info(f"Using Claude CLI: {CLAUDE_PATH}")
 
-# Log version at import time so it's always visible
-try:
-    import subprocess as _sp
-    _ver = _sp.check_output([CLAUDE_PATH, "--version"], stderr=_sp.STDOUT, timeout=10).decode().strip()
-    logger.info(f"Claude Code version: {_ver}")
-except Exception as _e:
-    logger.warning(f"Could not determine Claude Code version: {_e}")
-
 # Per-request temp dirs are created in call_claude() — no shared WORK_DIR needed
 
 _semaphore = asyncio.Semaphore(MAX_CONCURRENT)
@@ -112,15 +89,6 @@ _ENV.pop("CLAUDECODE", None)  # Allow spawning claude from within a Claude Code 
 # Content format: "array" (CHIM-style JSON block arrays) or "flat" (plain text)
 # Set interactively at startup via __main__
 CONTENT_FORMAT = "flat"
-
-# Effort level: "low", "medium", "high", or None (let model decide)
-# Set interactively at startup via __main__; can be overridden per-request via reasoning field
-EFFORT_LEVEL = None
-
-# Whether to route each request through a local capture proxy to log the full API body.
-# Disabled by default — enable for debugging.  The startup capture on /debug/system-prompt
-# always uses the capture proxy regardless of this flag.
-CAPTURE_REQUESTS = False
 
 
 # ---------------------------------------------------------------------------
@@ -276,7 +244,12 @@ def _format_prompt(conversation: list[dict]) -> str:
 # Claude CLI subprocess interface
 # ---------------------------------------------------------------------------
 
-BASE_SYSTEM_PROMPT = "Let's roleplay in the world of Skyrim."
+BASE_SYSTEM_PROMPT = (
+    "You are roleplaying a character in Skyrim. "
+    "Follow the character definition provided in your context exactly. "
+    "Stay in character at all times. Respond only as the character. "
+    "Do not break character or reference being an AI."
+)
 
 # File where the captured real system prompt is written
 # Log dir next to this .py file (visible from Windows desktop)
@@ -294,64 +267,52 @@ REQUEST_LOG = LOG_DIR / "requests.log"
 _ANTHROPIC_API_HOST = "api.anthropic.com"
 
 
-def _make_capture_handler(storage: dict):
-    """Create a capture handler class that stores the POST body in `storage`."""
+class _CaptureHandler(http.server.BaseHTTPRequestHandler):
+    """Tiny HTTP proxy that captures the POST body and forwards to Anthropic."""
+    captured_body: bytes = b""
 
-    class _Handler(http.server.BaseHTTPRequestHandler):
-        def log_message(self, *args):
-            pass
+    def log_message(self, *args):
+        pass  # suppress default http.server logging
 
-        def _forward(self, method: str):
-            length = int(self.headers.get("Content-Length", 0))
-            body = self.rfile.read(length) if length else b""
-            if method == "POST":
-                storage["body"] = body
+    def _forward(self, method: str):
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length) if length else b""
+        if method == "POST":
+            _CaptureHandler.captured_body = body
 
-            fwd = {}
-            for key, val in self.headers.items():
-                if key.lower() != "host":
-                    fwd[key] = val
-            fwd["Host"] = _ANTHROPIC_API_HOST
+        # Rebuild headers for the real API
+        fwd = {}
+        for key, val in self.headers.items():
+            if key.lower() != "host":
+                fwd[key] = val
+        fwd["Host"] = _ANTHROPIC_API_HOST
 
-            try:
-                conn = http.client.HTTPSConnection(_ANTHROPIC_API_HOST)
-                conn.request(method, self.path, body or None, fwd)
-                resp = conn.getresponse()
-                resp_body = resp.read()
+        try:
+            conn = http.client.HTTPSConnection(_ANTHROPIC_API_HOST)
+            conn.request(method, self.path, body or None, fwd)
+            resp = conn.getresponse()
+            resp_body = resp.read()
 
-                self.send_response(resp.status)
-                for key, val in resp.getheaders():
-                    if key.lower() not in ("transfer-encoding", "content-length"):
-                        self.send_header(key, val)
-                self.send_header("Content-Length", str(len(resp_body)))
-                self.end_headers()
-                self.wfile.write(resp_body)
-                conn.close()
-            except Exception as e:
-                err = f"Proxy forward error: {e}".encode()
-                self.send_response(502)
-                self.send_header("Content-Length", str(len(err)))
-                self.end_headers()
-                self.wfile.write(err)
+            self.send_response(resp.status)
+            for key, val in resp.getheaders():
+                if key.lower() not in ("transfer-encoding", "content-length"):
+                    self.send_header(key, val)
+            self.send_header("Content-Length", str(len(resp_body)))
+            self.end_headers()
+            self.wfile.write(resp_body)
+            conn.close()
+        except Exception as e:
+            err = f"Proxy forward error: {e}".encode()
+            self.send_response(502)
+            self.send_header("Content-Length", str(len(err)))
+            self.end_headers()
+            self.wfile.write(err)
 
-        def do_POST(self):
-            self._forward("POST")
+    def do_POST(self):
+        self._forward("POST")
 
-        def do_GET(self):
-            self._forward("GET")
-
-    return _Handler
-
-
-def _start_capture_proxy() -> tuple:
-    """Start a per-request capture proxy. Returns (server, port, storage)."""
-    storage = {"body": b""}
-    handler = _make_capture_handler(storage)
-    server = http.server.HTTPServer(("127.0.0.1", 0), handler)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    return server, port, storage, thread
+    def do_GET(self):
+        self._forward("GET")
 
 
 def _format_api_body(api_body: dict) -> str:
@@ -428,13 +389,19 @@ def _format_api_body(api_body: dict) -> str:
     return "\n".join(lines)
 
 
-async def capture_system_prompt(model: str = DEFAULT_MODEL) -> Optional[str]:
+async def capture_system_prompt(model: str = "claude-haiku-4-5-20251001") -> Optional[str]:
     """
     Capture the FULL API request body by routing Claude CLI through a local
     HTTP proxy.  Sets ANTHROPIC_BASE_URL so the SDK sends the request to us
     instead of api.anthropic.com; we log it, then forward it to the real API.
     """
-    proxy, port, storage, proxy_thread = _start_capture_proxy()
+    _CaptureHandler.captured_body = b""
+
+    # Start local proxy on a random port
+    proxy = http.server.HTTPServer(("127.0.0.1", 0), _CaptureHandler)
+    port = proxy.server_address[1]
+    proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
+    proxy_thread.start()
     logger.info(f"Capture proxy listening on 127.0.0.1:{port}")
 
     # Run claude CLI with our proxy as the API endpoint
@@ -465,7 +432,7 @@ async def capture_system_prompt(model: str = DEFAULT_MODEL) -> Optional[str]:
             proc.communicate(input=b"Hello there."), timeout=60,
         )
         if stderr:
-            logger.info(f"Capture stderr: {stderr.decode(errors='replace')[:1000]}")
+            logger.debug(f"Capture stderr: {stderr.decode(errors='replace')[:500]}")
     except Exception as e:
         logger.warning(f"Capture CLI call failed: {e}")
     finally:
@@ -474,16 +441,16 @@ async def capture_system_prompt(model: str = DEFAULT_MODEL) -> Optional[str]:
         proxy_thread.join(timeout=5)
 
     # Parse what we captured
-    if not storage["body"]:
+    if not _CaptureHandler.captured_body:
         msg = "No API request was captured — the proxy may not have been reached."
         logger.warning(msg)
         SYSTEM_PROMPT_LOG.write_text(msg, encoding="utf-8")
         return msg
 
     try:
-        api_body = json.loads(storage["body"])
+        api_body = json.loads(_CaptureHandler.captured_body)
     except json.JSONDecodeError:
-        raw = storage["body"].decode(errors="replace")
+        raw = _CaptureHandler.captured_body.decode(errors="replace")
         result = f"RAW CAPTURED BODY (not valid JSON):\n\n{raw}"
         SYSTEM_PROMPT_LOG.write_text(result, encoding="utf-8")
         logger.warning("Captured body was not valid JSON")
@@ -498,46 +465,23 @@ async def capture_system_prompt(model: str = DEFAULT_MODEL) -> Optional[str]:
     return result
 
 
-def _log_request(request_id: str, model: str, api_body: Optional[dict],
-                  claude_md: Optional[str], stdin: str,
-                  response: str, elapsed: float):
-    """Append request + response to logs/requests.log.
-
-    If api_body is available (capture proxy was active), the full intercepted
-    API body is logged — system blocks, messages, metadata, thinking, etc.
-    Otherwise, falls back to logging the CLAUDE.md and stdin we sent to the CLI.
-    """
+def _log_request(request_id: str, model: str, claude_md: Optional[str],
+                  stdin: str, response: str, elapsed: float):
+    """Append a full request/response record to logs/requests.log."""
     sep = "=" * 72
-    parts = [
-        f"\n{sep}",
+    entry = (
+        f"\n{sep}\n"
         f"REQUEST {request_id}  |  {time.strftime('%Y-%m-%d %H:%M:%S')}  |  "
-        f"{model}  |  {elapsed:.1f}s",
-        sep,
-    ]
-
-    if api_body:
-        parts.append(_format_api_body(api_body))
-    else:
-        parts.extend([
-            "",
-            "--- CLAUDE.MD (system prompt written to temp dir) ---",
-            claude_md or "(none)",
-            "",
-            "--- STDIN (conversation piped to claude -p) ---",
-            stdin,
-        ])
-
-    parts.extend([
-        "",
-        sep,
-        "RESPONSE",
-        sep,
-        response,
-        "",
-        sep,
-    ])
-
-    entry = "\n".join(parts) + "\n"
+        f"{model}  |  {elapsed:.1f}s\n"
+        f"{sep}\n"
+        f"\n--- CLAUDE.MD (system prompt written to temp dir) ---\n"
+        f"{claude_md or '(none)'}\n"
+        f"\n--- STDIN (conversation piped to claude -p) ---\n"
+        f"{stdin}\n"
+        f"\n--- RESPONSE ---\n"
+        f"{response}\n"
+        f"\n{sep}\n"
+    )
     try:
         with open(REQUEST_LOG, "a", encoding="utf-8") as f:
             f.write(entry)
@@ -545,65 +489,21 @@ def _log_request(request_id: str, model: str, api_body: Optional[dict],
         logger.warning(f"[{request_id}] Failed to write request log: {e}")
 
 
-_ALL_TOOLS = [
-    "AskUserQuestion", "Bash", "Computer", "Edit", "EnterPlanMode",
-    "EnterWorktree", "ExitPlanMode", "Glob", "Grep", "LSP",
-    "NotebookEdit", "ReadFile", "SendMessageTool", "Skill", "Sleep",
-    "Task", "TaskCreate", "TodoWrite", "Agent", "Write",
-    "TeammateTool", "TeamDelete", "ToolSearch", "WebFetch", "WebSearch",
-    "NotebookRead",
-]
-
-
-def _build_cmd(model: str, effort: Optional[str] = None) -> list[str]:
+def _build_cmd(model: str) -> list[str]:
     """Build claude CLI command with all context-minimization flags."""
-    cmd = [
+    return [
         CLAUDE_PATH, "-p",
-        "--tools", "",                       # Disable all tools (documented format: --tools "")
-        "--disallowedTools",                 # Remove tool descriptions from model context entirely
-        *_ALL_TOOLS,
+        "--tools=",                          # No tools → no tool descriptions in context
         "--disable-slash-commands",          # No skill descriptions in context
-        "--system-prompt", BASE_SYSTEM_PROMPT,
+        "--system-prompt", BASE_SYSTEM_PROMPT,  # Short directive (fits Windows 32K limit)
         "--model", model,
         "--output-format", "json",           # Single JSON result — reliable on all platforms
         "--max-turns", "1",                  # Single response, no tool loops
         "--no-session-persistence",          # Don't save session to disk
     ]
-    if effort and effort in ("low", "medium", "high"):
-        cmd.extend(["--effort", effort])
-    return cmd
 
 
-def _resolve_effort(reasoning: Optional[dict]) -> Optional[str]:
-    """Resolve effort level: per-request reasoning field > startup default > None.
-
-    The CHIM connector sends a reasoning object like:
-      {"enabled": true, "effort": "medium", "exclude": true}
-    or for Anthropic-style:
-      {"enabled": true, "max_tokens": 1024, "exclude": true}
-
-    For Claude CLI, we map to --effort (low/medium/high).
-    CHIM's "minimal" maps to "low" since Claude CLI doesn't have "minimal".
-    """
-    effort = None
-
-    # Extract from per-request reasoning field
-    if reasoning and isinstance(reasoning, dict):
-        if reasoning.get("enabled", False):
-            raw = reasoning.get("effort")
-            if raw:
-                raw = str(raw).lower()
-                # CHIM uses "minimal" which Claude CLI doesn't support → map to "low"
-                effort = {"minimal": "low", "low": "low", "medium": "medium", "high": "high"}.get(raw)
-
-    # Fall back to startup default
-    if not effort and EFFORT_LEVEL:
-        effort = EFFORT_LEVEL
-
-    return effort
-
-
-async def call_claude(system_prompt: Optional[str], conversation: list[dict], model: str, effort: Optional[str] = None) -> str:
+async def call_claude(system_prompt: Optional[str], conversation: list[dict], model: str) -> str:
     """
     Spawn claude -p in a per-request temp dir with CLAUDE.md for the system prompt.
 
@@ -612,34 +512,15 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
         → Claude Code auto-loads it as a <system-reminder> with authority framing
       - conversation messages → piped to stdin (just the dialogue, no system prompt)
       - --system-prompt flag → short roleplay directive only (controls API system blocks)
-
-    Optionally routes through a per-request capture proxy (CAPTURE_REQUESTS=True)
-    to log the full API body to requests.log.  Disabled by default for reliability.
     """
     prompt = _format_prompt(conversation)
-    cmd = _build_cmd(model, effort)
+    cmd = _build_cmd(model)
 
     request_id = uuid.uuid4().hex[:8]
     sys_len = len(system_prompt) if system_prompt else 0
-    effort_str = f", effort={effort}" if effort else ""
     logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, "
-                f"{sys_len} chars system, {len(prompt)} chars dialogue{effort_str})")
-    logger.debug(f"[{request_id}] cmd: {' '.join(repr(c) for c in cmd)}")
+                f"{sys_len} chars system, {len(prompt)} chars dialogue)")
     start = time.time()
-
-    # Optional per-request capture proxy
-    proxy = proxy_thread = storage = None
-    env = _ENV
-    if CAPTURE_REQUESTS:
-        try:
-            proxy, proxy_port, storage, proxy_thread = _start_capture_proxy()
-            env = _ENV.copy()
-            env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{proxy_port}"
-            logger.debug(f"[{request_id}] Capture proxy on port {proxy_port}")
-        except Exception as e:
-            logger.warning(f"[{request_id}] Capture proxy failed to start: {e} — proceeding without capture")
-            proxy = proxy_thread = storage = None
-            env = _ENV
 
     # Per-request isolation: each NPC gets its own temp dir + CLAUDE.md
     req_dir = tempfile.mkdtemp(prefix=f"claude-req-{request_id}-")
@@ -654,7 +535,7 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=env,
+                env=_ENV,
                 cwd=req_dir,
             )
             stdout, stderr = await asyncio.wait_for(
@@ -662,17 +543,13 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
             )
     finally:
         shutil.rmtree(req_dir, ignore_errors=True)
-        if proxy:
-            proxy.shutdown()
-        if proxy_thread:
-            proxy_thread.join(timeout=5)
 
     elapsed = time.time() - start
     raw = stdout.decode("utf-8", errors="replace").strip()
     err = stderr.decode("utf-8", errors="replace").strip()
 
     if err:
-        logger.warning(f"[{request_id}] stderr: {err[:1000]}")
+        logger.debug(f"[{request_id}] stderr: {err[:500]}")
 
     if proc.returncode != 0:
         logger.error(f"[{request_id}] exit {proc.returncode}: {err[:500]}")
@@ -704,32 +581,23 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict], mo
 
     logger.info(f"[{request_id}] <- {len(text)} chars ({elapsed:.1f}s)")
 
-    # Parse captured API body for the log (if capture was active)
-    api_body = None
-    if storage and storage["body"]:
-        try:
-            api_body = json.loads(storage["body"])
-        except json.JSONDecodeError:
-            logger.warning(f"[{request_id}] Captured API body was not valid JSON")
-
-    # --- Per-request log (full API body if captured, otherwise what we have) ---
-    _log_request(request_id, model, api_body, system_prompt, prompt, text, elapsed)
+    # --- Per-request prompt log ---
+    _log_request(request_id, model, system_prompt, prompt, text, elapsed)
 
     return text
 
 
-async def call_claude_streaming(system_prompt: Optional[str], conversation: list[dict], model: str, effort: Optional[str] = None):
+async def call_claude_streaming(system_prompt: Optional[str], conversation: list[dict], model: str):
     """Streaming wrapper: get full response then emit as OpenAI SSE chunks."""
     request_id = uuid.uuid4().hex[:8]
     cmpl_id = f"chatcmpl-{uuid.uuid4().hex[:16]}"
     created = int(time.time())
 
-    effort_str = f", effort={effort}" if effort else ""
-    logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, stream{effort_str})")
+    logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, stream)")
     start = time.time()
 
     # Get complete response (reliable across platforms)
-    response = await call_claude(system_prompt, conversation, model, effort)
+    response = await call_claude(system_prompt, conversation, model)
 
     # Role chunk
     role_chunk = {
@@ -787,27 +655,7 @@ class ChatRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app):
-    # Auto-capture what Claude Code actually sends to the API
-    logger.info("Running startup capture to verify context minimization...")
-    try:
-        result = await capture_system_prompt()
-        if result:
-            # Count system blocks to verify tools/skills are stripped
-            if SYSTEM_PROMPT_LOG.exists():
-                log_text = SYSTEM_PROMPT_LOG.read_text(encoding="utf-8", errors="replace")
-                n_blocks = log_text.count("System Block")
-                has_tools = "tool" in log_text.lower() and "disallowed" not in log_text.lower()
-                log_size = len(log_text)
-                logger.info(f"Capture complete: {n_blocks} system blocks, {log_size} chars total")
-                if has_tools:
-                    logger.warning("WARNING: Tool descriptions may still be present in context!")
-                    logger.warning("Check /debug/system-prompt for details")
-                else:
-                    logger.info("No tool descriptions detected — context looks clean")
-                logger.info(f"Full capture saved to: {SYSTEM_PROMPT_LOG}")
-    except Exception as e:
-        logger.warning(f"Startup capture failed: {e} — proxy will still work, check /debug/system-prompt manually")
-    logger.info("Proxy ready")
+    logger.info("Proxy ready — use /debug/system-prompt?refresh=true to capture system prompt on demand")
     yield
 
 
@@ -819,11 +667,6 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 async def chat_completions(req: ChatRequest):
     model = req.model or DEFAULT_MODEL
     system_prompt, conversation, npc_name = _extract_messages(req.messages, req.npc_name)
-
-    # Resolve effort level: per-request reasoning field > startup default
-    # The CHIM connector sends reasoning as: {"enabled": true, "effort": "medium", ...}
-    reasoning = getattr(req, "reasoning", None)
-    effort = _resolve_effort(reasoning)
 
     if not conversation:
         raise HTTPException(status_code=400, detail="No user/assistant messages provided")
@@ -848,12 +691,12 @@ async def chat_completions(req: ChatRequest):
 
     if req.stream:
         return StreamingResponse(
-            call_claude_streaming(system_prompt, merged, model, effort),
+            call_claude_streaming(system_prompt, merged, model),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    response = await call_claude(system_prompt, merged, model, effort)
+    response = await call_claude(system_prompt, merged, model)
     if not response:
         raise HTTPException(status_code=500, detail="Empty response from Claude")
 
@@ -904,8 +747,6 @@ async def health():
         "status": "healthy",
         "mode": "subprocess (legitimate)",
         "content_format": CONTENT_FORMAT,
-        "effort_level": EFFORT_LEVEL or "auto (per-request)",
-        "capture_requests": CAPTURE_REQUESTS,
         "claude_path": CLAUDE_PATH,
         "work_dir": "per-request temp dirs",
         "max_concurrent": MAX_CONCURRENT,
@@ -1016,10 +857,6 @@ async def dashboard():
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px">
       <div><span class="label">Content Format</span><br>
         <span class="value" style="color:#67e8f9">{CONTENT_FORMAT}</span></div>
-      <div><span class="label">Effort Level</span><br>
-        <span class="value" style="color:#67e8f9">{EFFORT_LEVEL or "auto (per-request)"}</span></div>
-    </div>
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px">
       <div><span class="label">NPC Name</span><br>
         <span class="value" style="color:#67e8f9">auto-detect (or npc_name field)</span></div>
     </div>
@@ -1029,18 +866,14 @@ async def dashboard():
     <h3 style="margin:0 0 8px; font-size:0.85rem; color:#94a3b8; text-transform:uppercase;
                letter-spacing:0.05em">Context Minimization</h3>
     <table>
-      <tr><td class="label">--tools ""</td>
-        <td class="value" style="color:#4ade80">all tools disabled</td></tr>
-      <tr><td class="label">--disallowedTools</td>
-        <td class="value" style="color:#4ade80">all {len(_ALL_TOOLS)} tool descriptions removed from context</td></tr>
+      <tr><td class="label">--tools=</td>
+        <td class="value" style="color:#4ade80">all tool descriptions removed</td></tr>
       <tr><td class="label">--disable-slash-commands</td>
         <td class="value" style="color:#4ade80">skill descriptions removed</td></tr>
       <tr><td class="label">--max-turns 1</td>
         <td class="value" style="color:#4ade80">single response, no tool loops</td></tr>
       <tr><td class="label">--system-prompt</td>
         <td class="value" style="color:#4ade80">short roleplay directive (API system blocks)</td></tr>
-      <tr><td class="label">--effort</td>
-        <td class="value" style="color:#4ade80">thinking depth (from connector or startup default)</td></tr>
       <tr><td class="label">CLAUDE.md per request</td>
         <td class="value" style="color:#4ade80">NPC bio &rarr; &lt;system-reminder&gt; with authority framing</td></tr>
       <tr><td class="label">stdin</td>
@@ -1105,36 +938,13 @@ async function testChat() {{
 
 
 if __name__ == "__main__":
-    print("\n  CHIM Proxy v1 — Startup Configuration\n")
+    print("\n  CHIM Proxy v0.9.1 — Startup Configuration\n")
     print("  Content format for system prompt and conversation:")
     print("    [1] Array  — preserve CHIM block structure (JSON arrays in CLAUDE.md and stdin)")
     print("    [2] Flat   — flatten to plain text (original behavior)")
     choice = input("\n  Select format [1/2] (default: 1): ").strip()
     CONTENT_FORMAT = "flat" if choice == "2" else "array"
     logger.info(f"Content format: {CONTENT_FORMAT}")
-
-    print("\n  Effort level (controls thinking depth via --effort flag):")
-    print("    [1] Low    — minimal reasoning, fastest responses")
-    print("    [2] Medium — balanced reasoning (recommended)")
-    print("    [3] High   — thorough reasoning, slower responses")
-    print("    [4] Auto   — no default; use per-request reasoning from connector")
-    effort_choice = input("\n  Select effort [1/2/3/4] (default: 4): ").strip()
-    EFFORT_LEVEL = {"1": "low", "2": "medium", "3": "high"}.get(effort_choice)
-    if EFFORT_LEVEL:
-        logger.info(f"Default effort level: {EFFORT_LEVEL}")
-    else:
-        logger.info("Default effort level: auto (per-request from connector, or none)")
-
-    print("\n  Request capture (route each request through a local proxy to log")
-    print("  the full API body — system blocks, messages, metadata, thinking):")
-    print("    [1] Off — log CLAUDE.md + stdin only (default, most reliable)")
-    print("    [2] On  — capture full API body via per-request proxy (debug)")
-    capture_choice = input("\n  Enable capture [1/2] (default: 1): ").strip()
-    CAPTURE_REQUESTS = capture_choice == "2"
-    if CAPTURE_REQUESTS:
-        logger.info("Request capture: ON (full API body via per-request proxy)")
-    else:
-        logger.info("Request capture: OFF (logging CLAUDE.md + stdin)")
 
     host = "0.0.0.0"
     port = 8000
@@ -1160,18 +970,33 @@ if __name__ == "__main__":
             sys.exit(1)
         print(f"\n  NOTE: Port {original_port} is in use — using port {port} instead.")
 
-    proxy_url = f"http://127.0.0.1:{port}/v1/chat/completions"
+    # Detect real LAN/WSL IP addresses (not just localhost)
+    local_ips = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127."):
+                if ip not in local_ips:
+                    local_ips.append(ip)
+    except Exception:
+        pass
 
-    print(f"\n  Content format:   {CONTENT_FORMAT}")
-    print(f"  Effort level:    {EFFORT_LEVEL or 'auto (per-request)'}")
-    print(f"  Request capture: {'ON' if CAPTURE_REQUESTS else 'OFF'}")
+    # Primary IP: first detected LAN address, fallback to localhost
+    primary_ip = local_ips[0] if local_ips else "127.0.0.1"
+    proxy_url = f"http://{primary_ip}:{port}/v1/chat/completions"
+
+    print(f"\n  Content format: {CONTENT_FORMAT}")
     print(f"  NPC name: auto-detected from system prompt (or pass 'npc_name' in request body)")
     print()
     print("  " + "=" * 60)
     print(f"    Proxy URL:   {proxy_url}")
+    if len(local_ips) > 1:
+        for ip in local_ips[1:]:
+            print(f"                 http://{ip}:{port}/v1/chat/completions")
+    print(f"    Localhost:   http://127.0.0.1:{port}/v1/chat/completions")
     print("  " + "-" * 60)
-    print(f"    Dashboard:   http://127.0.0.1:{port}/")
-    print(f"    Health:      http://127.0.0.1:{port}/health")
+    print(f"    Dashboard:   http://{primary_ip}:{port}/")
+    print(f"    Health:      http://{primary_ip}:{port}/health")
     print("  " + "=" * 60)
     print()
 

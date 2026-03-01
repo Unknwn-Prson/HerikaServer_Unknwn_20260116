@@ -1,4 +1,4 @@
-# CHIM Proxy v1 — Installation Guide
+# CHIM Proxy v0.9.1 — Installation Guide
 
 Complete setup guide for using Claude models with CHIM/SkyrimNet via a local proxy.
 
@@ -30,7 +30,7 @@ Double-click `start_chim_proxy.bat` (or run `python chim_proxy_v1.py` from a ter
 On startup, you'll be asked to choose a content format:
 
 ```
-  CHIM Proxy v1 — Startup Configuration
+  CHIM Proxy v0.9.1 — Startup Configuration
 
   Content format for system prompt and conversation:
     [1] Array  — preserve CHIM block structure (JSON arrays in CLAUDE.md and stdin)

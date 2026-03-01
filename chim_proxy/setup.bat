@@ -1,6 +1,6 @@
 @echo off
 :: ============================================================
-:: CHIM Proxy v1 - One-Time Setup
+:: CHIM Proxy v0.9.1 - One-Time Setup
 :: Must be run as Administrator!
 :: ============================================================
 net session >nul 2>&1
@@ -12,12 +12,12 @@ if %errorlevel% neq 0 (
 )
 
 echo ============================================================
-echo  CHIM Proxy v1 - Setup
+echo  CHIM Proxy v0.9.1 - Setup
 echo ============================================================
 echo.
 
 :: 1. Check for Git (required by Claude Code)
-echo [1/7] Checking for Git...
+echo [1/8] Checking for Git...
 where git >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Git is not installed!
@@ -32,7 +32,7 @@ if %errorlevel% neq 0 (
 echo.
 
 :: 2. Check for Python
-echo [2/7] Checking for Python...
+echo [2/8] Checking for Python...
 where python >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Python is not installed!
@@ -46,7 +46,7 @@ if %errorlevel% neq 0 (
 echo.
 
 :: 3. Install Python dependencies
-echo [3/7] Installing Python dependencies...
+echo [3/8] Installing Python dependencies...
 cd /d "%~dp0"
 python -c "import ensurepip; ensurepip._main()" >nul 2>&1
 python -c "import subprocess, sys; sys.exit(subprocess.call([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt']))"
@@ -58,7 +58,7 @@ if %errorlevel% neq 0 (
 echo.
 
 :: 4. Install Claude Code
-echo [4/7] Installing Claude Code...
+echo [4/8] Installing Claude Code...
 where claude >nul 2>&1
 if %errorlevel% equ 0 (
     echo       Claude Code is already installed.
@@ -82,8 +82,13 @@ if %errorlevel% equ 0 (
 )
 echo.
 
-:: 5. Windows Firewall rule (allow inbound on port 8000)
-echo [5/7] Adding Windows Firewall rule for port 8000...
+:: 5. Ensure HTTP_TIMEOUT in HerikaServer conf.php is at least 30s
+echo [5/8] Checking HerikaServer HTTP_TIMEOUT...
+call "%~dp0ensure_timeout.bat"
+echo.
+
+:: 6. Windows Firewall rule (allow inbound on port 8000)
+echo [6/8] Adding Windows Firewall rule for port 8000...
 netsh advfirewall firewall show rule name="CHIM Proxy" >nul 2>&1
 if %errorlevel% equ 0 (
     echo       Rule already exists, skipping.
@@ -99,8 +104,8 @@ if %errorlevel% equ 0 (
 )
 echo.
 
-:: 6. Port proxy so WSL can reach the proxy on Windows
-echo [6/7] Setting up port forwarding (WSL to Windows)...
+:: 7. Port proxy so WSL can reach the proxy on Windows
+echo [7/8] Setting up port forwarding (WSL to Windows)...
 netsh interface portproxy delete v4tov4 listenport=8000 listenaddress=0.0.0.0 >nul 2>&1
 netsh interface portproxy add v4tov4 ^
     listenport=8000 listenaddress=0.0.0.0 ^
@@ -112,8 +117,8 @@ if %errorlevel% equ 0 (
 )
 echo.
 
-:: 7. Claude Code login (last — opens interactive TUI that blocks the script)
-echo [7/7] Claude Code authentication...
+:: 8. Claude Code login (last — opens interactive TUI that blocks the script)
+echo [8/8] Claude Code authentication...
 where claude >nul 2>&1
 if %errorlevel% neq 0 (
     echo [WARN] 'claude' not found on PATH yet.
