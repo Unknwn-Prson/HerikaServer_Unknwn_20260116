@@ -23,17 +23,17 @@ Each subprocess is launched with flags that strip unnecessary context:
 | `--max-turns 1` | Single response, no tool loops |
 | `--system-prompt "..."` | Short roleplay directive (API system blocks) |
 | `--no-session-persistence` | Don't save session to disk |
-| `--thinking-budget N` | Extended thinking budget (when enabled) |
+| `--effort <level>` | Reasoning effort: low, medium, high (when enabled) |
 | `CLAUDE.md` in temp dir | Full NPC system prompt with authority framing |
 | stdin | Conversation messages only |
 
 Irreducible Claude Code overhead is ~105 tokens (billing notice + agent identity).
 
-### Extended Thinking
+### Reasoning Effort
 
-Extended thinking lets Claude reason internally before responding. This can improve roleplay quality at the cost of higher latency and token usage.
+Reasoning effort controls how much Claude thinks before responding. Higher effort can improve roleplay quality at the cost of higher latency and token usage. Valid levels: `low`, `medium`, `high`.
 
-**Global setting** (at startup): Choose to enable thinking and set a default budget.
+**Global setting** (at startup): Choose an effort level or leave disabled.
 
 **Per-request override**: HerikaServer can send a `reasoning` field in the request body (matching its `toggle_thinking` / `thinking_tokens` / `effort_level` connector settings):
 
@@ -43,13 +43,13 @@ Extended thinking lets Claude reason internally before responding. This can impr
   "messages": [...],
   "reasoning": {
     "enabled": true,
-    "max_tokens": 10000,
+    "effort": "medium",
     "exclude": true
   }
 }
 ```
 
-The `effort` field (OpenAI-style: `"minimal"`, `"low"`, `"medium"`, `"high"`) is also supported and mapped to approximate token budgets. Per-request settings override the global default. Anthropic's minimum thinking budget is 1024 tokens.
+If HerikaServer sends `max_tokens` (thinking_tokens) instead of `effort`, the proxy maps it to an approximate effort level. Per-request settings override the global default.
 
 ### Content Format Modes
 

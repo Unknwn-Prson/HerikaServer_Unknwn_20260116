@@ -15,7 +15,7 @@ Context minimization (applied per request):
   --disable-slash-commands    → removes skill/slash-command descriptions from context
   --system-prompt "..."       → short roleplay directive (controls API system blocks)
   --max-turns 1               → single response, no tool loops
-  --thinking-budget N         → extended thinking budget (when enabled)
+  --effort <level>            → reasoning effort: low, medium, high (when enabled)
   CLAUDE.md in temp dir       → full NPC system prompt with authority framing
   stdin                       → conversation messages only (dialogue history)
 
@@ -73,17 +73,20 @@ DEFAULT_MODEL = "claude-sonnet-4-6"
 MAX_CONCURRENT = 4
 
 # Extended thinking / reasoning settings (configurable at startup)
-# Maps to Claude CLI --thinking-budget flag
+# Maps to Claude CLI --effort flag (low / medium / high)
 THINKING_ENABLED = False
-THINKING_BUDGET = 10000  # Default budget tokens when thinking is on (Anthropic minimum: 1024)
+THINKING_EFFORT = "medium"  # Default effort level when thinking is on
 
-# Map OpenAI-style effort_level to approximate budget tokens
-_EFFORT_TO_BUDGET = {
-    "minimal": 0,       # Disabled
-    "low":     5000,
-    "medium":  10000,
-    "high":    20000,
-}
+# Valid effort levels for Claude models
+_VALID_EFFORTS = ("low", "medium", "high")
+
+# Map HerikaServer thinking_tokens (budget) to approximate effort level
+def _tokens_to_effort(tokens: int) -> str:
+    if tokens <= 2000:
+        return "low"
+    elif tokens <= 10000:
+        return "medium"
+    return "high"
 
 CLAUDE_PATH = shutil.which("claude")
 if not CLAUDE_PATH:
@@ -503,7 +506,7 @@ def _log_request(request_id: str, model: str, claude_md: Optional[str],
         logger.warning(f"[{request_id}] Failed to write request log: {e}")
 
 
-def _build_cmd(model: str, thinking_budget: int = 0) -> list[str]:
+def _build_cmd(model: str, effort: str = "") -> list[str]:
     """Build claude CLI command with all context-minimization flags."""
     cmd = [
         CLAUDE_PATH, "-p",
@@ -515,13 +518,13 @@ def _build_cmd(model: str, thinking_budget: int = 0) -> list[str]:
         "--max-turns", "1",                  # Single response, no tool loops
         "--no-session-persistence",          # Don't save session to disk
     ]
-    if thinking_budget >= 1024:
-        cmd.extend(["--thinking-budget", str(thinking_budget)])
+    if effort in _VALID_EFFORTS:
+        cmd.extend(["--effort", effort])
     return cmd
 
 
 async def call_claude(system_prompt: Optional[str], conversation: list[dict],
-                      model: str, thinking_budget: int = 0) -> str:
+                      model: str, effort: str = "") -> str:
     """
     Spawn claude -p in a per-request temp dir with CLAUDE.md for the system prompt.
 
@@ -530,16 +533,16 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict],
         → Claude Code auto-loads it as a <system-reminder> with authority framing
       - conversation messages → piped to stdin (just the dialogue, no system prompt)
       - --system-prompt flag → short roleplay directive only (controls API system blocks)
-      - thinking_budget > 0 → enables extended thinking via --thinking-budget
+      - effort → reasoning effort level via --effort (low/medium/high)
     """
     prompt = _format_prompt(conversation)
-    cmd = _build_cmd(model, thinking_budget)
+    cmd = _build_cmd(model, effort)
 
     request_id = uuid.uuid4().hex[:8]
     sys_len = len(system_prompt) if system_prompt else 0
-    thinking_str = f", thinking={thinking_budget}" if thinking_budget else ""
+    effort_str = f", effort={effort}" if effort else ""
     logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, "
-                f"{sys_len} chars system, {len(prompt)} chars dialogue{thinking_str})")
+                f"{sys_len} chars system, {len(prompt)} chars dialogue{effort_str})")
     start = time.time()
 
     # Per-request isolation: each NPC gets its own temp dir + CLAUDE.md
@@ -608,18 +611,18 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict],
 
 
 async def call_claude_streaming(system_prompt: Optional[str], conversation: list[dict],
-                                model: str, thinking_budget: int = 0):
+                                model: str, effort: str = ""):
     """Streaming wrapper: get full response then emit as OpenAI SSE chunks."""
     request_id = uuid.uuid4().hex[:8]
     cmpl_id = f"chatcmpl-{uuid.uuid4().hex[:16]}"
     created = int(time.time())
 
     logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, stream"
-                f"{f', thinking={thinking_budget}' if thinking_budget else ''})")
+                f"{f', effort={effort}' if effort else ''})")
     start = time.time()
 
     # Get complete response (reliable across platforms)
-    response = await call_claude(system_prompt, conversation, model, thinking_budget)
+    response = await call_claude(system_prompt, conversation, model, effort)
 
     # Role chunk
     role_chunk = {
@@ -686,25 +689,26 @@ app = FastAPI(title="Claude SkyrimNet Proxy", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
-def _resolve_thinking_budget(reasoning: Optional[dict]) -> int:
-    """Resolve thinking budget from per-request reasoning param or global defaults.
+def _resolve_effort(reasoning: Optional[dict]) -> str:
+    """Resolve reasoning effort from per-request reasoning param or global defaults.
 
     HerikaServer sends:  {enabled: bool, max_tokens: int, effort: str, exclude: bool}
-      - max_tokens: Anthropic/Gemini budget (minimum 1024)
-      - effort: OpenAI-style level ("minimal"/"low"/"medium"/"high")
-    Returns 0 if thinking should be off.
+      - effort: level string ("low"/"medium"/"high")
+      - max_tokens: Anthropic thinking_tokens — mapped to approximate effort level
+    Returns "" if thinking/effort should not be set.
     """
     if reasoning and reasoning.get("enabled"):
-        # Prefer explicit max_tokens, fall back to effort level mapping
-        if "max_tokens" in reasoning:
-            return max(int(reasoning["max_tokens"]), 1024)
+        # Prefer explicit effort level
         effort = reasoning.get("effort", "")
-        if effort in _EFFORT_TO_BUDGET:
-            return _EFFORT_TO_BUDGET[effort]
-        return THINKING_BUDGET
+        if effort in _VALID_EFFORTS:
+            return effort
+        # Fall back: map thinking_tokens to effort level
+        if "max_tokens" in reasoning:
+            return _tokens_to_effort(int(reasoning["max_tokens"]))
+        return THINKING_EFFORT
     if THINKING_ENABLED:
-        return THINKING_BUDGET
-    return 0
+        return THINKING_EFFORT
+    return ""
 
 
 @app.post("/v1/chat/completions")
@@ -733,16 +737,16 @@ async def chat_completions(req: ChatRequest):
             else:
                 merged.append(msg)
 
-    thinking_budget = _resolve_thinking_budget(req.reasoning)
+    effort = _resolve_effort(req.reasoning)
 
     if req.stream:
         return StreamingResponse(
-            call_claude_streaming(system_prompt, merged, model, thinking_budget),
+            call_claude_streaming(system_prompt, merged, model, effort),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    response = await call_claude(system_prompt, merged, model, thinking_budget)
+    response = await call_claude(system_prompt, merged, model, effort)
     if not response:
         raise HTTPException(status_code=500, detail="Empty response from Claude")
 
@@ -794,7 +798,7 @@ async def health():
         "mode": "subprocess (legitimate)",
         "content_format": CONTENT_FORMAT,
         "thinking_enabled": THINKING_ENABLED,
-        "thinking_budget": THINKING_BUDGET if THINKING_ENABLED else 0,
+        "thinking_effort": THINKING_EFFORT if THINKING_ENABLED else "off",
         "claude_path": CLAUDE_PATH,
         "work_dir": "per-request temp dirs",
         "max_concurrent": MAX_CONCURRENT,
@@ -909,10 +913,10 @@ async def dashboard():
         <span class="value" style="color:#67e8f9">auto-detect (or npc_name field)</span></div>
     </div>
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px">
-      <div><span class="label">Extended Thinking</span><br>
+      <div><span class="label">Reasoning Effort</span><br>
         <span class="value" style="color:{'#4ade80' if THINKING_ENABLED else '#f87171'}">{'enabled' if THINKING_ENABLED else 'disabled'}</span></div>
-      <div><span class="label">Thinking Budget</span><br>
-        <span class="value" style="color:#67e8f9">{THINKING_BUDGET if THINKING_ENABLED else 'n/a'} tokens</span></div>
+      <div><span class="label">Effort Level</span><br>
+        <span class="value" style="color:#67e8f9">{THINKING_EFFORT if THINKING_ENABLED else 'n/a'}</span></div>
     </div>
   </div>
 
@@ -932,8 +936,8 @@ async def dashboard():
         <td class="value" style="color:#4ade80">NPC bio &rarr; &lt;system-reminder&gt; with authority framing</td></tr>
       <tr><td class="label">stdin</td>
         <td class="value" style="color:#4ade80">conversation messages only (dialogue)</td></tr>
-      <tr><td class="label">--thinking-budget</td>
-        <td class="value" style="color:{'#4ade80' if THINKING_ENABLED else '#9ca3af'}">{'enabled (' + str(THINKING_BUDGET) + ' tokens)' if THINKING_ENABLED else 'disabled (per-request override still works)'}</td></tr>
+      <tr><td class="label">--effort</td>
+        <td class="value" style="color:{'#4ade80' if THINKING_ENABLED else '#9ca3af'}">{THINKING_EFFORT if THINKING_ENABLED else 'disabled (per-request override still works)'}</td></tr>
       <tr><td class="label">irreducible overhead</td>
         <td class="value" style="color:#facc15">~105 tokens (billing + agent identity + directive)</td></tr>
     </table>
@@ -1002,19 +1006,19 @@ if __name__ == "__main__":
     CONTENT_FORMAT = "flat" if choice == "2" else "array"
     logger.info(f"Content format: {CONTENT_FORMAT}")
 
-    print("\n  Extended thinking (lets Claude reason before responding):")
-    print("    [1] Off    — standard responses (default)")
-    print("    [2] On     — enable thinking with configurable token budget")
+    print("\n  Reasoning effort (lets Claude think before responding):")
+    print("    [1] Off    — no --effort flag, standard responses (default)")
+    print("    [2] Low    — minimal reasoning")
+    print("    [3] Medium — balanced reasoning")
+    print("    [4] High   — maximum reasoning")
     print("    Note: HerikaServer can override this per-request via the 'reasoning' field.")
-    t_choice = input("\n  Enable thinking [1/2] (default: 1): ").strip()
-    if t_choice == "2":
+    t_choice = input("\n  Select effort [1/2/3/4] (default: 1): ").strip()
+    if t_choice in ("2", "3", "4"):
         THINKING_ENABLED = True
-        budget_input = input("  Thinking budget in tokens [default: 10000, min: 1024]: ").strip()
-        if budget_input.isdigit() and int(budget_input) >= 1024:
-            THINKING_BUDGET = int(budget_input)
-        logger.info(f"Extended thinking: ON (budget={THINKING_BUDGET})")
+        THINKING_EFFORT = {"2": "low", "3": "medium", "4": "high"}[t_choice]
+        logger.info(f"Reasoning effort: {THINKING_EFFORT}")
     else:
-        logger.info("Extended thinking: OFF (per-request override still works)")
+        logger.info("Reasoning effort: OFF (per-request override still works)")
 
     host = "0.0.0.0"
     port = 8000
@@ -1057,9 +1061,9 @@ if __name__ == "__main__":
 
     print(f"\n  Content format: {CONTENT_FORMAT}")
     if THINKING_ENABLED:
-        print(f"  Thinking: ON (budget: {THINKING_BUDGET} tokens)")
+        print(f"  Reasoning effort: {THINKING_EFFORT}")
     else:
-        print("  Thinking: OFF (per-request override via 'reasoning' field still works)")
+        print("  Reasoning effort: OFF (per-request override via 'reasoning' field still works)")
     print(f"  NPC name: auto-detected from system prompt (or pass 'npc_name' in request body)")
     print()
     print("  " + "=" * 60)
