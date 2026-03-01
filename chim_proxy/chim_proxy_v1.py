@@ -69,7 +69,19 @@ from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("proxy")
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+DEFAULT_MODEL = "claude-opus-4-5-20250929"
+
+# Known provider prefixes to strip from model names (e.g. "anthropic/claude-sonnet-4-6" → "claude-sonnet-4-6")
+_PROVIDER_PREFIXES = ("anthropic/", "openrouter/", "openai/")
+
+
+def _normalize_model(model: str) -> str:
+    """Strip provider prefixes from model names so the Claude CLI receives a bare model ID."""
+    for prefix in _PROVIDER_PREFIXES:
+        if model.startswith(prefix):
+            return model[len(prefix):]
+    return model
+
 MAX_CONCURRENT = 4
 
 # Extended thinking / reasoning settings (configurable at startup)
@@ -732,7 +744,7 @@ def _resolve_thinking_tokens(reasoning: Optional[dict]) -> int:
 
 @app.post("/v1/chat/completions")
 async def chat_completions(req: ChatRequest):
-    model = req.model or DEFAULT_MODEL
+    model = _normalize_model(req.model) if req.model else DEFAULT_MODEL
     system_prompt, conversation, npc_name = _extract_messages(req.messages, req.npc_name)
 
     if not conversation:
@@ -803,6 +815,7 @@ async def list_models():
     return {
         "object": "list",
         "data": [
+            {"id": "claude-opus-4-5-20250929", "object": "model", "owned_by": "anthropic"},
             {"id": "claude-opus-4-6", "object": "model", "owned_by": "anthropic"},
             {"id": "claude-sonnet-4-6", "object": "model", "owned_by": "anthropic"},
             {"id": "claude-sonnet-4-5-20250929", "object": "model", "owned_by": "anthropic"},
@@ -867,8 +880,9 @@ async def debug_requests(last: int = 5):
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     models = [
-        ("claude-opus-4-6", "Opus 4.6", "Most capable"),
-        ("claude-sonnet-4-6", "Sonnet 4.6", "Best balance (default)"),
+        ("claude-opus-4-5-20250929", "Opus 4.5", "Most capable (default)"),
+        ("claude-opus-4-6", "Opus 4.6", "Latest Opus"),
+        ("claude-sonnet-4-6", "Sonnet 4.6", "Best balance"),
         ("claude-sonnet-4-5-20250929", "Sonnet 4.5", "Previous gen"),
         ("claude-haiku-4-5-20251001", "Haiku 4.5", "Fastest"),
     ]
