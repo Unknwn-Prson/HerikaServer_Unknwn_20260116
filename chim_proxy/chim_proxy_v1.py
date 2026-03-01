@@ -80,13 +80,6 @@ THINKING_EFFORT = "medium"  # Default effort level when thinking is on
 # Valid effort levels for Claude models
 _VALID_EFFORTS = ("low", "medium", "high")
 
-# Map HerikaServer thinking_tokens (budget) to approximate effort level
-def _tokens_to_effort(tokens: int) -> str:
-    if tokens <= 2000:
-        return "low"
-    elif tokens <= 10000:
-        return "medium"
-    return "high"
 
 CLAUDE_PATH = shutil.which("claude")
 if not CLAUDE_PATH:
@@ -524,7 +517,7 @@ def _build_cmd(model: str, effort: str = "") -> list[str]:
 
 
 async def call_claude(system_prompt: Optional[str], conversation: list[dict],
-                      model: str, effort: str = "") -> str:
+                      model: str, effort: str = "", thinking_tokens: int = 0) -> str:
     """
     Spawn claude -p in a per-request temp dir with CLAUDE.md for the system prompt.
 
@@ -534,15 +527,21 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict],
       - conversation messages → piped to stdin (just the dialogue, no system prompt)
       - --system-prompt flag → short roleplay directive only (controls API system blocks)
       - effort → reasoning effort level via --effort (low/medium/high)
+      - thinking_tokens → MAX_THINKING_TOKENS env var (token budget from HerikaServer)
     """
     prompt = _format_prompt(conversation)
     cmd = _build_cmd(model, effort)
 
     request_id = uuid.uuid4().hex[:8]
     sys_len = len(system_prompt) if system_prompt else 0
-    effort_str = f", effort={effort}" if effort else ""
+    extras = []
+    if effort:
+        extras.append(f"effort={effort}")
+    if thinking_tokens:
+        extras.append(f"thinking_tokens={thinking_tokens}")
+    extras_str = f", {', '.join(extras)}" if extras else ""
     logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, "
-                f"{sys_len} chars system, {len(prompt)} chars dialogue{effort_str})")
+                f"{sys_len} chars system, {len(prompt)} chars dialogue{extras_str})")
     start = time.time()
 
     # Per-request isolation: each NPC gets its own temp dir + CLAUDE.md
@@ -552,13 +551,19 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict],
             claude_md = Path(req_dir) / "CLAUDE.md"
             claude_md.write_text(system_prompt, encoding="utf-8")
 
+        # Per-request env: set MAX_THINKING_TOKENS if HerikaServer sent thinking_tokens
+        env = _ENV
+        if thinking_tokens >= 1024:
+            env = _ENV.copy()
+            env["MAX_THINKING_TOKENS"] = str(thinking_tokens)
+
         async with _semaphore:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=_ENV,
+                env=env,
                 cwd=req_dir,
             )
             stdout, stderr = await asyncio.wait_for(
@@ -611,18 +616,23 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict],
 
 
 async def call_claude_streaming(system_prompt: Optional[str], conversation: list[dict],
-                                model: str, effort: str = ""):
+                                model: str, effort: str = "", thinking_tokens: int = 0):
     """Streaming wrapper: get full response then emit as OpenAI SSE chunks."""
     request_id = uuid.uuid4().hex[:8]
     cmpl_id = f"chatcmpl-{uuid.uuid4().hex[:16]}"
     created = int(time.time())
 
+    extras = []
+    if effort:
+        extras.append(f"effort={effort}")
+    if thinking_tokens:
+        extras.append(f"thinking_tokens={thinking_tokens}")
     logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, stream"
-                f"{f', effort={effort}' if effort else ''})")
+                f"{', ' + ', '.join(extras) if extras else ''})")
     start = time.time()
 
     # Get complete response (reliable across platforms)
-    response = await call_claude(system_prompt, conversation, model, effort)
+    response = await call_claude(system_prompt, conversation, model, effort, thinking_tokens)
 
     # Role chunk
     role_chunk = {
@@ -694,21 +704,30 @@ def _resolve_effort(reasoning: Optional[dict]) -> str:
 
     HerikaServer sends:  {enabled: bool, max_tokens: int, effort: str, exclude: bool}
       - effort: level string ("low"/"medium"/"high")
-      - max_tokens: Anthropic thinking_tokens — mapped to approximate effort level
-    Returns "" if thinking/effort should not be set.
+    Returns "" if effort should not be set.
     """
     if reasoning and reasoning.get("enabled"):
-        # Prefer explicit effort level
         effort = reasoning.get("effort", "")
         if effort in _VALID_EFFORTS:
             return effort
-        # Fall back: map thinking_tokens to effort level
-        if "max_tokens" in reasoning:
-            return _tokens_to_effort(int(reasoning["max_tokens"]))
-        return THINKING_EFFORT
+        # No explicit effort — use global default if thinking is enabled
+        if THINKING_ENABLED:
+            return THINKING_EFFORT
+        return ""
     if THINKING_ENABLED:
         return THINKING_EFFORT
     return ""
+
+
+def _resolve_thinking_tokens(reasoning: Optional[dict]) -> int:
+    """Extract thinking token budget from per-request reasoning param.
+
+    HerikaServer sends max_tokens via its thinking_tokens connector setting.
+    Returns the value floored at 1024 (Anthropic minimum), or 0 if not set.
+    """
+    if reasoning and reasoning.get("enabled") and "max_tokens" in reasoning:
+        return max(int(reasoning["max_tokens"]), 1024)
+    return 0
 
 
 @app.post("/v1/chat/completions")
@@ -738,15 +757,16 @@ async def chat_completions(req: ChatRequest):
                 merged.append(msg)
 
     effort = _resolve_effort(req.reasoning)
+    thinking_tokens = _resolve_thinking_tokens(req.reasoning)
 
     if req.stream:
         return StreamingResponse(
-            call_claude_streaming(system_prompt, merged, model, effort),
+            call_claude_streaming(system_prompt, merged, model, effort, thinking_tokens),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    response = await call_claude(system_prompt, merged, model, effort)
+    response = await call_claude(system_prompt, merged, model, effort, thinking_tokens)
     if not response:
         raise HTTPException(status_code=500, detail="Empty response from Claude")
 

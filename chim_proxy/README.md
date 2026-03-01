@@ -49,7 +49,7 @@ Reasoning effort controls how much Claude thinks before responding. Higher effor
 }
 ```
 
-If HerikaServer sends `max_tokens` (thinking_tokens) instead of `effort`, the proxy maps it to an approximate effort level. Per-request settings override the global default.
+If HerikaServer sends `max_tokens` (thinking_tokens), the proxy passes the value directly as `MAX_THINKING_TOKENS` (floored at 1024). Both `effort` and `max_tokens` can be sent together. Per-request settings override the global default.
 
 ### Content Format Modes
 
