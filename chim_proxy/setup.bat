@@ -1,6 +1,6 @@
 @echo off
 :: ============================================================
-:: CHIM Proxy v0.9.1 - One-Time Setup
+:: CHIM Proxy v0.9.2 - One-Time Setup
 :: Must be run as Administrator!
 :: ============================================================
 net session >nul 2>&1
@@ -12,7 +12,7 @@ if %errorlevel% neq 0 (
 )
 
 echo ============================================================
-echo  CHIM Proxy v0.9.1 - Setup
+echo  CHIM Proxy v0.9.2 - Setup
 echo ============================================================
 echo.
 

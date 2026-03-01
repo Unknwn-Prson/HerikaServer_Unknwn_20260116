@@ -1,4 +1,4 @@
-# CHIM Proxy v0.9.1
+# CHIM Proxy v0.9.2
 
 An OpenAI-compatible API proxy that routes requests through a Claude subscription via the Claude Code CLI. Designed for use with [CHIM](https://github.com/MinLL/SkyrimNet-GamePlugin) to power AI-driven NPC conversations in Skyrim.
 
@@ -23,10 +23,33 @@ Each subprocess is launched with flags that strip unnecessary context:
 | `--max-turns 1` | Single response, no tool loops |
 | `--system-prompt "..."` | Short roleplay directive (API system blocks) |
 | `--no-session-persistence` | Don't save session to disk |
+| `--thinking-budget N` | Extended thinking budget (when enabled) |
 | `CLAUDE.md` in temp dir | Full NPC system prompt with authority framing |
 | stdin | Conversation messages only |
 
 Irreducible Claude Code overhead is ~105 tokens (billing notice + agent identity).
+
+### Extended Thinking
+
+Extended thinking lets Claude reason internally before responding. This can improve roleplay quality at the cost of higher latency and token usage.
+
+**Global setting** (at startup): Choose to enable thinking and set a default budget.
+
+**Per-request override**: HerikaServer can send a `reasoning` field in the request body (matching its `toggle_thinking` / `thinking_tokens` / `effort_level` connector settings):
+
+```json
+{
+  "model": "claude-opus-4-6",
+  "messages": [...],
+  "reasoning": {
+    "enabled": true,
+    "max_tokens": 10000,
+    "exclude": true
+  }
+}
+```
+
+The `effort` field (OpenAI-style: `"minimal"`, `"low"`, `"medium"`, `"high"`) is also supported and mapped to approximate token budgets. Per-request settings override the global default. Anthropic's minimum thinking budget is 1024 tokens.
 
 ### Content Format Modes
 

@@ -1,4 +1,4 @@
-# CHIM Proxy v0.9.1 — Installation Guide
+# CHIM Proxy v0.9.2 — Installation Guide
 
 Complete setup guide for using Claude models with CHIM/SkyrimNet via a local proxy.
 
@@ -27,20 +27,31 @@ Right-click `setup.bat` and select **Run as administrator**. This will:
 
 Double-click `start_chim_proxy.bat` (or run `python chim_proxy_v1.py` from a terminal).
 
-On startup, you'll be asked to choose a content format:
+On startup, you'll be asked to choose a content format and thinking settings:
 
 ```
-  CHIM Proxy v0.9.1 — Startup Configuration
+  CHIM Proxy v0.9.2 — Startup Configuration
 
   Content format for system prompt and conversation:
     [1] Array  — preserve CHIM block structure (JSON arrays in CLAUDE.md and stdin)
     [2] Flat   — flatten to plain text (original behavior)
 
   Select format [1/2] (default: 1):
+
+  Extended thinking (lets Claude reason before responding):
+    [1] Off    — standard responses (default)
+    [2] On     — enable thinking with configurable token budget
+    Note: HerikaServer can override this per-request via the 'reasoning' field.
+
+  Enable thinking [1/2] (default: 1):
 ```
 
 - **Array** (recommended): preserves CHIM's native block structure, giving the model the same context layout CHIM itself uses
 - **Flat**: joins all blocks into plain text, simpler but loses structural information
+- **Thinking Off** (default): standard responses, lower latency
+- **Thinking On**: Claude reasons internally before responding — better quality, higher latency and token usage. You'll be asked for a budget (default: 10000 tokens, minimum: 1024).
+
+> **Note:** Even with thinking disabled globally, HerikaServer can enable it per-request via its `toggle_thinking` / `thinking_tokens` connector settings.
 
 The proxy will start listening on `http://127.0.0.1:8000`.
 
@@ -63,7 +74,7 @@ In the CHIM web interface, create or edit a connector with these settings:
 | **Provider** | *(leave empty)* |
 | **Driver** | `OpenAI JSON` |
 | **API Key** | `Nano-GPT — No key` |
-| **Reasoning Model** | `Off` |
+| **Reasoning Model** | `Off` (or configure `toggle_thinking` / `thinking_tokens` per connector) |
 | **Enforce JSON** | `On` |
 | **JSON Schema** | `On` |
 | **Prefill JSON** | `Off` |
