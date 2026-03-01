@@ -9,7 +9,7 @@ require_once($enginePath . "lib" .DIRECTORY_SEPARATOR."tokenizer_helper_function
 class openrouterjsoncached
 {
     // Version tracking - update after making changes
-    const VERSION = 'OpenRouter Cache Connector v1.7.6 for CHIM 2.4.3+ | 2026/02/27';
+    const VERSION = 'OpenRouter Cache Connector v1.7.7 for CHIM 2.4.3+ | 2026/03/01';
     public $primary_handler;
     public $name;
 
@@ -72,6 +72,7 @@ class openrouterjsoncached
     private $_sentencesSent;
     private $_metadataGroups;
     private $_flushedPartial;
+    private $_jsonMessageReturned;
 
     // Memory handling mode: 'accumulate' (dedupe) or 'fresh' (like regular connector)
     private $_memoryMode;
@@ -133,6 +134,7 @@ class openrouterjsoncached
         $this->_sentencesSent = 0;
         $this->_metadataGroups = [];
         $this->_flushedPartial = false;
+        $this->_jsonMessageReturned = false;
 
         // Initialize new v2 settings
         $this->_memoryMode = 'accumulate';  // 'accumulate' or 'fresh'
@@ -1631,6 +1633,11 @@ class openrouterjsoncached
      */
     private function _parseAndReturnContent() {
         if ($this->_responseFormat === 'json') {
+            // Guard: JSON message already returned — prevent duplicate delivery
+            if ($this->_jsonMessageReturned) {
+                return "";
+            }
+
             // JSON format parsing
             $extracted_json_or_text = extractJson($this->_buffer);
             $tempJson = json_decode($extracted_json_or_text, true);
@@ -1648,6 +1655,9 @@ class openrouterjsoncached
                         $GLOBALS["SCRIPTLINE_LISTENER"] = $tempJson["listener"];
                     }
                 }
+                // Mark as returned to prevent duplicate delivery on subsequent calls
+                $this->_jsonMessageReturned = true;
+
                 // Strip any reasoning tokens from final message
                 if (function_exists('stripReasoningTokens')) {
                     return stripReasoningTokens($tempJson['message']);
