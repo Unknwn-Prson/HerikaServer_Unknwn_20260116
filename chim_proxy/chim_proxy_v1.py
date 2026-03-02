@@ -327,8 +327,11 @@ _ANTHROPIC_API_HOST = "api.anthropic.com"
 
 
 class _CaptureHandler(http.server.BaseHTTPRequestHandler):
-    """Tiny HTTP proxy that captures the POST body and forwards to Anthropic."""
-    captured_body: bytes = b""
+    """Tiny HTTP proxy that captures the POST body and forwards to Anthropic.
+
+    Captured body is stored on self.server.captured_body so each HTTPServer
+    instance is isolated (safe for concurrent per-request MITM proxies).
+    """
 
     def log_message(self, *args):
         pass  # suppress default http.server logging
@@ -337,7 +340,7 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length) if length else b""
         if method == "POST":
-            _CaptureHandler.captured_body = body
+            self.server.captured_body = body
 
         # Rebuild headers for the real API
         fwd = {}
@@ -458,10 +461,9 @@ async def capture_system_prompt(model: str = "claude-haiku-4-5-20251001") -> Opt
     AND writes CLAUDE.md (like NPC bio/instructions), so the capture shows
     exactly what the model receives during actual gameplay.
     """
-    _CaptureHandler.captured_body = b""
-
     # Start local proxy on a random port
     proxy = http.server.HTTPServer(("127.0.0.1", 0), _CaptureHandler)
+    proxy.captured_body = b""  # per-instance storage
     port = proxy.server_address[1]
     proxy_thread = threading.Thread(target=proxy.serve_forever, daemon=True)
     proxy_thread.start()
@@ -513,16 +515,16 @@ async def capture_system_prompt(model: str = "claude-haiku-4-5-20251001") -> Opt
         proxy_thread.join(timeout=5)
 
     # Parse what we captured
-    if not _CaptureHandler.captured_body:
+    if not proxy.captured_body:
         msg = "No API request was captured — the proxy may not have been reached."
         logger.warning(msg)
         SYSTEM_PROMPT_LOG.write_text(msg, encoding="utf-8")
         return msg
 
     try:
-        api_body = json.loads(_CaptureHandler.captured_body)
+        api_body = json.loads(proxy.captured_body)
     except json.JSONDecodeError:
-        raw = _CaptureHandler.captured_body.decode(errors="replace")
+        raw = proxy.captured_body.decode(errors="replace")
         result = f"RAW CAPTURED BODY (not valid JSON):\n\n{raw}"
         SYSTEM_PROMPT_LOG.write_text(result, encoding="utf-8")
         logger.warning("Captured body was not valid JSON")
@@ -604,86 +606,65 @@ def _analyze_overhead(api_body: dict, our_system_prompt: str, our_claude_md: str
     return "\n".join(lines)
 
 
-def _log_request(request_id: str, model: str, cmd: list[str],
-                  prompt_head: str, claude_md: Optional[str],
-                  stdin: str, response: str, elapsed: float):
-    """Append a full request/response record to logs/requests.log."""
-    sep = "=" * 72
-    # Build readable CLI command (mask long --system-prompt value)
-    cmd_display = []
-    skip_next = False
-    for i, arg in enumerate(cmd):
-        if skip_next:
-            skip_next = False
-            continue
-        if arg == "--system-prompt" and i + 1 < len(cmd):
-            cmd_display.append(f'--system-prompt "({len(cmd[i+1])} chars)"')
-            skip_next = True
-        else:
-            cmd_display.append(arg)
-    cmd_str = " ".join(cmd_display)
+def _log_request(request_id: str, model: str, elapsed: float,
+                  api_body: Optional[dict], response_text: str):
+    """Append a full request/response record to logs/requests.log.
 
+    api_body is the REAL API request body captured by the per-request MITM
+    proxy — it contains literally every token sent to the model: system
+    blocks (Claude Code overhead + our --system-prompt + <system-reminder>
+    from CLAUDE.md), all messages, and all parameters.
+    """
+    sep = "=" * 72
     entry = (
         f"\n{sep}\n"
         f"REQUEST {request_id}  |  {time.strftime('%Y-%m-%d %H:%M:%S')}  |  "
         f"{model}  |  {elapsed:.1f}s\n"
         f"{sep}\n"
-        f"\n--- CLI COMMAND ---\n"
-        f"{cmd_str}\n"
     )
 
-    if prompt_head:
+    if api_body:
+        # --- API parameters ---
         entry += (
-            f"\n--- SYSTEM PROMPT via --system-prompt (API system block) ---\n"
-            f"{prompt_head}\n"
+            f"\nModel: {api_body.get('model', '?')}  |  "
+            f"Max tokens: {api_body.get('max_tokens', '?')}  |  "
+            f"Stream: {api_body.get('stream', False)}\n"
         )
 
-    if claude_md:
-        # Decode JSON block arrays to readable text for the log
-        readable = claude_md
-        try:
-            blocks = json.loads(claude_md)
-            if isinstance(blocks, list):
-                readable = "\n".join(
-                    b.get("text", "") for b in blocks if isinstance(b, dict)
-                )
-        except (json.JSONDecodeError, TypeError):
-            pass
-        entry += (
-            f"\n--- SYSTEM PROMPT via CLAUDE.MD (temp dir → <system-reminder>) ---\n"
-            f"{readable}\n"
-        )
+        # --- System blocks (the ACTUAL system prompt the model sees) ---
+        system_blocks = api_body.get("system", [])
+        entry += f"\n--- SYSTEM PROMPT ({len(system_blocks)} blocks) ---\n"
+        for i, block in enumerate(system_blocks):
+            if isinstance(block, dict):
+                btype = block.get("type", "?")
+                text = block.get("text", "")
+                cache = block.get("cache_control")
+                entry += (f"\n[Block {i} type={btype}"
+                          f"{', cache=' + str(cache) if cache else ''}]\n"
+                          f"{text}\n")
+            elif isinstance(block, str):
+                entry += f"\n[Block {i}]\n{block}\n"
 
-    if not prompt_head and not claude_md:
-        entry += "\n--- SYSTEM PROMPT ---\n(none)\n"
-
-    # Decode stdin JSON to readable conversation for the log
-    readable_stdin = stdin
-    try:
-        msgs = json.loads(stdin)
-        if isinstance(msgs, list):
-            parts = []
-            for msg in msgs:
-                role = msg.get("role", "?")
-                content = msg.get("content", "")
-                if isinstance(content, list):
-                    text = "\n".join(
-                        b.get("text", "") for b in content if isinstance(b, dict)
-                    )
-                elif isinstance(content, str):
-                    text = content
-                else:
-                    text = str(content)
-                parts.append(f"[{role}]\n{text}")
-            readable_stdin = "\n\n".join(parts)
-    except (json.JSONDecodeError, TypeError):
-        pass
+        # --- Messages (the ACTUAL conversation the model sees) ---
+        messages = api_body.get("messages", [])
+        entry += f"\n--- MESSAGES ({len(messages)} total) ---\n"
+        for i, msg in enumerate(messages):
+            role = msg.get("role", "?")
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                entry += f"\n[{role}]\n{content}\n"
+            elif isinstance(content, list):
+                parts = []
+                for block in content:
+                    if isinstance(block, dict):
+                        parts.append(block.get("text", ""))
+                entry += f"\n[{role}]\n{''.join(parts)}\n"
+    else:
+        entry += "\n(MITM capture failed — API body not available)\n"
 
     entry += (
-        f"\n--- STDIN (conversation piped to claude -p) ---\n"
-        f"{readable_stdin}\n"
         f"\n--- RESPONSE ---\n"
-        f"{response}\n"
+        f"{response_text}\n"
         f"\n{sep}\n"
     )
     try:
@@ -721,14 +702,16 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
     """
     Spawn claude -p in a per-request temp dir with CLAUDE.md for the system prompt.
 
+    Each request is routed through a per-request MITM proxy that intercepts the
+    actual API call from Claude Code → Anthropic.  This lets us log literally
+    every token the model receives (system blocks, messages, tool descriptions,
+    etc.) before forwarding to the real API.
+
     Architecture:
-      - prompt_head (CHIM's <roleplay_instructions>) → passed via --system-prompt
-        (controls the API system block directly)
-      - claude_md_content (rest of system message) → written as CLAUDE.md in temp dir
-        → Claude Code auto-loads it as a <system-reminder> with authority framing
-      - conversation messages → piped to stdin (just the dialogue)
-      - effort → reasoning effort level via --effort (low/medium/high)
-      - thinking_tokens → MAX_THINKING_TOKENS env var (token budget from HerikaServer)
+      - prompt_head (CHIM's <roleplay_instructions>) → --system-prompt flag
+      - claude_md_content (rest of system message) → CLAUDE.md in temp dir
+      - conversation → piped to stdin
+      - MITM proxy captures the full API body and logs it to requests.log
     """
     prompt = _format_prompt(conversation)
     cmd = _build_cmd(model, effort, system_prompt=prompt_head)
@@ -747,6 +730,13 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
                 f"{len(prompt)} chars dialogue{extras_str})")
     start = time.time()
 
+    # Per-request MITM proxy: intercepts Claude Code → Anthropic API call
+    mitm = http.server.HTTPServer(("127.0.0.1", 0), _CaptureHandler)
+    mitm.captured_body = b""
+    mitm_port = mitm.server_address[1]
+    mitm_thread = threading.Thread(target=mitm.serve_forever, daemon=True)
+    mitm_thread.start()
+
     # Per-request isolation: each NPC gets its own temp dir + CLAUDE.md
     req_dir = tempfile.mkdtemp(prefix=f"claude-req-{request_id}-")
     try:
@@ -754,10 +744,10 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
             claude_md = Path(req_dir) / "CLAUDE.md"
             claude_md.write_text(claude_md_content, encoding="utf-8")
 
-        # Per-request env: set MAX_THINKING_TOKENS if HerikaServer sent thinking_tokens
-        env = _ENV
+        # Per-request env: MITM proxy + optional thinking tokens
+        env = _ENV.copy()
+        env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{mitm_port}"
         if thinking_tokens >= 1024:
-            env = _ENV.copy()
             env["MAX_THINKING_TOKENS"] = str(thinking_tokens)
 
         async with _semaphore:
@@ -774,6 +764,8 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
             )
     finally:
         shutil.rmtree(req_dir, ignore_errors=True)
+        mitm.shutdown()
+        mitm_thread.join(timeout=5)
 
     elapsed = time.time() - start
     raw = stdout.decode("utf-8", errors="replace").strip()
@@ -785,6 +777,15 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
     if proc.returncode != 0:
         logger.error(f"[{request_id}] exit {proc.returncode}: {err[:500]}")
         raise HTTPException(status_code=502, detail=f"Claude CLI error: {err[:200]}")
+
+    # Parse captured API body (the REAL request to Anthropic)
+    captured_api_body = None
+    if mitm.captured_body:
+        try:
+            captured_api_body = json.loads(mitm.captured_body)
+        except json.JSONDecodeError:
+            logger.warning(f"[{request_id}] MITM captured non-JSON body "
+                           f"({len(mitm.captured_body)} bytes)")
 
     # Parse response — try single JSON first, then scan for result line
     text = ""
@@ -812,9 +813,8 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
 
     logger.info(f"[{request_id}] <- {len(text)} chars ({elapsed:.1f}s)")
 
-    # --- Per-request prompt log ---
-    _log_request(request_id, model, cmd, prompt_head, claude_md_content,
-                 prompt, text, elapsed)
+    # --- Log the FULL API request body (every token sent to the model) ---
+    _log_request(request_id, model, elapsed, captured_api_body, text)
 
     return text
 
