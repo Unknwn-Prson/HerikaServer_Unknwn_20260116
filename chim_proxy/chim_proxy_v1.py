@@ -13,7 +13,7 @@ Architecture:
 Context minimization (applied per request):
   --tools=                    → removes ALL built-in tool descriptions (~10-16K tokens saved)
   --disable-slash-commands    → removes skill/slash-command descriptions from context
-  --system-prompt "..."       → short roleplay directive (controls API system blocks)
+  --system-prompt "..."       → CHIM's PROMPT_HEAD / <roleplay_instructions> (controls API system blocks)
   --max-turns 1               → single response, no tool loops
   --effort <level>            → reasoning effort: low, medium, high (when enabled)
   CLAUDE.md in temp dir       → full NPC system prompt with authority framing
@@ -178,8 +178,14 @@ def _detect_npc_name(system_contents: list) -> Optional[str]:
 
 def _extract_messages(
     raw_messages: list, npc_name_override: Optional[str] = None,
-) -> tuple[Optional[str], list[dict], Optional[str]]:
-    """Split OpenAI messages into (system_prompt, conversation, npc_name).
+) -> tuple[str, Optional[str], list[dict], Optional[str]]:
+    """Split OpenAI messages into (prompt_head, claude_md, conversation, npc_name).
+
+    Returns:
+      prompt_head  — content from <roleplay_instructions> (used as --system-prompt)
+      claude_md    — remainder of system message (written to CLAUDE.md)
+      conversation — formatted dialogue messages
+      npc_name     — detected or overridden NPC name
 
     Respects the global CONTENT_FORMAT:
       'flat'  — system prompt is plain text, conversation content is plain text
@@ -205,16 +211,26 @@ def _extract_messages(
     # Detect or use override NPC name
     npc_name = npc_name_override or _detect_npc_name(system_contents)
 
-    # Format system prompt for CLAUDE.md
+    # Flatten all system content to extract PROMPT_HEAD
+    prompt_head = ""
     if not system_contents:
-        system_prompt = None
+        claude_md = None
     elif CONTENT_FORMAT == "array":
-        all_blocks = []
-        for content in system_contents:
-            all_blocks.extend(_content_to_blocks(content))
-        system_prompt = json.dumps(all_blocks, indent=2, ensure_ascii=False)
+        # In array mode, flatten first to find <roleplay_instructions>, then
+        # rebuild the remainder as a JSON block array for CLAUDE.md
+        flat_system = "\n\n".join(_flatten_content(c) for c in system_contents)
+        prompt_head, remainder = _split_prompt_head(flat_system)
+        if remainder:
+            # Re-encode remainder as CHIM-style block array
+            claude_md = json.dumps(
+                [{"type": "text", "text": remainder}], indent=2, ensure_ascii=False,
+            )
+        else:
+            claude_md = None
     else:
-        system_prompt = "\n\n".join(_flatten_content(c) for c in system_contents)
+        flat_system = "\n\n".join(_flatten_content(c) for c in system_contents)
+        prompt_head, remainder = _split_prompt_head(flat_system)
+        claude_md = remainder if remainder else None
 
     # Format conversation
     conversation = []
@@ -234,7 +250,7 @@ def _extract_messages(
                 text = f"{npc_name}: {text}"
             conversation.append({"role": role, "content": text})
 
-    return system_prompt, conversation, npc_name
+    return prompt_head, claude_md, conversation, npc_name
 
 
 def _format_prompt(conversation: list[dict]) -> str:
@@ -266,12 +282,26 @@ def _format_prompt(conversation: list[dict]) -> str:
 # Claude CLI subprocess interface
 # ---------------------------------------------------------------------------
 
-BASE_SYSTEM_PROMPT = (
-    "You are roleplaying a character in Skyrim. "
-    "Follow the character definition provided in your context exactly. "
-    "Stay in character at all times. Respond only as the character. "
-    "Do not break character or reference being an AI."
+# Regex to extract <roleplay_instructions>…</roleplay_instructions> (PROMPT_HEAD) from CHIM system messages
+_PROMPT_HEAD_RE = re.compile(
+    r"<roleplay_instructions>\n?([\s\S]*?)\n?</roleplay_instructions>\n*",
 )
+
+
+def _split_prompt_head(system_text: str) -> tuple[str, str]:
+    """Split PROMPT_HEAD out of a CHIM system message.
+
+    Returns (prompt_head, remainder) where:
+      - prompt_head: the content inside <roleplay_instructions>…</roleplay_instructions>
+      - remainder:   everything else (for CLAUDE.md)
+    If no <roleplay_instructions> block is found, returns ("", original).
+    """
+    match = _PROMPT_HEAD_RE.search(system_text)
+    if not match:
+        return "", system_text
+    prompt_head = match.group(1).strip()
+    remainder = _PROMPT_HEAD_RE.sub("", system_text).strip()
+    return prompt_head, remainder
 
 # File where the captured real system prompt is written
 # Log dir next to this .py file (visible from Windows desktop)
@@ -511,41 +541,49 @@ def _log_request(request_id: str, model: str, claude_md: Optional[str],
         logger.warning(f"[{request_id}] Failed to write request log: {e}")
 
 
-def _build_cmd(model: str, effort: str = "") -> list[str]:
-    """Build claude CLI command with all context-minimization flags."""
+def _build_cmd(model: str, effort: str = "", system_prompt: str = "") -> list[str]:
+    """Build claude CLI command with all context-minimization flags.
+
+    system_prompt: PROMPT_HEAD extracted from CHIM's <roleplay_instructions> block.
+                   Passed via --system-prompt (controls the API system block).
+    """
     cmd = [
         CLAUDE_PATH, "-p",
         "--tools=",                          # No tools → no tool descriptions in context
         "--disable-slash-commands",          # No skill descriptions in context
-        "--system-prompt", BASE_SYSTEM_PROMPT,  # Short directive (fits Windows 32K limit)
         "--model", model,
         "--output-format", "json",           # Single JSON result — reliable on all platforms
         "--max-turns", "1",                  # Single response, no tool loops
         "--no-session-persistence",          # Don't save session to disk
     ]
+    if system_prompt:
+        cmd.extend(["--system-prompt", system_prompt])
     if effort in _VALID_EFFORTS:
         cmd.extend(["--effort", effort])
     return cmd
 
 
-async def call_claude(system_prompt: Optional[str], conversation: list[dict],
+async def call_claude(prompt_head: str, claude_md_content: Optional[str],
+                      conversation: list[dict],
                       model: str, effort: str = "", thinking_tokens: int = 0) -> str:
     """
     Spawn claude -p in a per-request temp dir with CLAUDE.md for the system prompt.
 
     Architecture:
-      - system_prompt (from CHIM) → written as CLAUDE.md in an isolated temp dir
+      - prompt_head (CHIM's <roleplay_instructions>) → passed via --system-prompt
+        (controls the API system block directly)
+      - claude_md_content (rest of system message) → written as CLAUDE.md in temp dir
         → Claude Code auto-loads it as a <system-reminder> with authority framing
-      - conversation messages → piped to stdin (just the dialogue, no system prompt)
-      - --system-prompt flag → short roleplay directive only (controls API system blocks)
+      - conversation messages → piped to stdin (just the dialogue)
       - effort → reasoning effort level via --effort (low/medium/high)
       - thinking_tokens → MAX_THINKING_TOKENS env var (token budget from HerikaServer)
     """
     prompt = _format_prompt(conversation)
-    cmd = _build_cmd(model, effort)
+    cmd = _build_cmd(model, effort, system_prompt=prompt_head)
 
     request_id = uuid.uuid4().hex[:8]
-    sys_len = len(system_prompt) if system_prompt else 0
+    head_len = len(prompt_head)
+    md_len = len(claude_md_content) if claude_md_content else 0
     extras = []
     if effort:
         extras.append(f"effort={effort}")
@@ -553,15 +591,16 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict],
         extras.append(f"thinking_tokens={thinking_tokens}")
     extras_str = f", {', '.join(extras)}" if extras else ""
     logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, "
-                f"{sys_len} chars system, {len(prompt)} chars dialogue{extras_str})")
+                f"{head_len} chars prompt_head, {md_len} chars claude.md, "
+                f"{len(prompt)} chars dialogue{extras_str})")
     start = time.time()
 
     # Per-request isolation: each NPC gets its own temp dir + CLAUDE.md
     req_dir = tempfile.mkdtemp(prefix=f"claude-req-{request_id}-")
     try:
-        if system_prompt:
+        if claude_md_content:
             claude_md = Path(req_dir) / "CLAUDE.md"
-            claude_md.write_text(system_prompt, encoding="utf-8")
+            claude_md.write_text(claude_md_content, encoding="utf-8")
 
         # Per-request env: set MAX_THINKING_TOKENS if HerikaServer sent thinking_tokens
         env = _ENV
@@ -622,12 +661,19 @@ async def call_claude(system_prompt: Optional[str], conversation: list[dict],
     logger.info(f"[{request_id}] <- {len(text)} chars ({elapsed:.1f}s)")
 
     # --- Per-request prompt log ---
-    _log_request(request_id, model, system_prompt, prompt, text, elapsed)
+    # Log both prompt_head and claude.md content for debugging
+    log_system = ""
+    if prompt_head:
+        log_system += f"--- PROMPT_HEAD (--system-prompt) ---\n{prompt_head}\n\n"
+    if claude_md_content:
+        log_system += f"--- CLAUDE.MD ---\n{claude_md_content}"
+    _log_request(request_id, model, log_system or None, prompt, text, elapsed)
 
     return text
 
 
-async def call_claude_streaming(system_prompt: Optional[str], conversation: list[dict],
+async def call_claude_streaming(prompt_head: str, claude_md_content: Optional[str],
+                                conversation: list[dict],
                                 model: str, effort: str = "", thinking_tokens: int = 0):
     """Streaming wrapper: get full response then emit as OpenAI SSE chunks."""
     request_id = uuid.uuid4().hex[:8]
@@ -644,7 +690,7 @@ async def call_claude_streaming(system_prompt: Optional[str], conversation: list
     start = time.time()
 
     # Get complete response (reliable across platforms)
-    response = await call_claude(system_prompt, conversation, model, effort, thinking_tokens)
+    response = await call_claude(prompt_head, claude_md_content, conversation, model, effort, thinking_tokens)
 
     # Role chunk
     role_chunk = {
@@ -745,7 +791,7 @@ def _resolve_thinking_tokens(reasoning: Optional[dict]) -> int:
 @app.post("/v1/chat/completions")
 async def chat_completions(req: ChatRequest):
     model = _normalize_model(req.model) if req.model else DEFAULT_MODEL
-    system_prompt, conversation, npc_name = _extract_messages(req.messages, req.npc_name)
+    prompt_head, claude_md, conversation, npc_name = _extract_messages(req.messages, req.npc_name)
 
     if not conversation:
         raise HTTPException(status_code=400, detail="No user/assistant messages provided")
@@ -773,22 +819,22 @@ async def chat_completions(req: ChatRequest):
 
     if req.stream:
         return StreamingResponse(
-            call_claude_streaming(system_prompt, merged, model, effort, thinking_tokens),
+            call_claude_streaming(prompt_head, claude_md, merged, model, effort, thinking_tokens),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    response = await call_claude(system_prompt, merged, model, effort, thinking_tokens)
+    response = await call_claude(prompt_head, claude_md, merged, model, effort, thinking_tokens)
     if not response:
         raise HTTPException(status_code=500, detail="Empty response from Claude")
 
     # Rough token estimates (chars / 4)
     if CONTENT_FORMAT == "array":
-        prompt_text = (system_prompt or "") + " ".join(
+        prompt_text = (prompt_head or "") + (claude_md or "") + " ".join(
             " ".join(b["text"] for b in m["content"]) for m in merged
         )
     else:
-        prompt_text = (system_prompt or "") + " ".join(m["content"] for m in merged)
+        prompt_text = (prompt_head or "") + (claude_md or "") + " ".join(m["content"] for m in merged)
     prompt_tokens = len(prompt_text) // 4
     completion_tokens = len(response) // 4
 
