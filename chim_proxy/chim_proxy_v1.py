@@ -6,18 +6,23 @@ Architecture:
   No MITM, no auth interception, no direct API calls — just the CLI as intended.
 
   System prompt routing:
-    If the system message contains <roleplay_instructions>…</roleplay_instructions>,
-    the content inside becomes --system-prompt and the remainder goes to CLAUDE.md.
-    If NO tags are found, the ENTIRE system message goes to --system-prompt
-    (API system block) and CLAUDE.md is not created.
+    If the system message contains <roleplay_instructions>…</roleplay_instructions>:
+      - Content inside tags  → --system-prompt (API system block, short)
+      - Everything else      → CLAUDE.md in temp dir (<system-reminder> framing)
+    If NO tags:
+      - Entire system message → CLAUDE.md (can't use --system-prompt on Windows
+        for long content due to 32K CreateProcess arg limit)
+
+  Claude Code auto-loads CLAUDE.md as a <system-reminder> with authority
+  framing.  The temp dir is cleaned up after each response.
 
 Context minimization (applied per request):
   --tools=                    → removes ALL built-in tool descriptions (~10-16K tokens saved)
   --disable-slash-commands    → removes skill/slash-command descriptions from context
-  --system-prompt "..."       → system message content (controls API system blocks)
+  --system-prompt "..."       → short <roleplay_instructions> only (if present)
   --max-turns 1               → single response, no tool loops
   --effort <level>            → reasoning effort: low, medium, high (when enabled)
-  CLAUDE.md in temp dir       → remainder after tag split (authority-framed system-reminder)
+  CLAUDE.md in temp dir       → bulk system prompt with authority framing
   stdin                       → conversation messages only (dialogue history)
 
   Environment variables:
@@ -295,14 +300,12 @@ def _split_prompt_head(system_text: str) -> tuple[str, str]:
     Returns (prompt_head, remainder) where:
       - prompt_head: the content inside <roleplay_instructions>…</roleplay_instructions>
       - remainder:   everything else (for CLAUDE.md)
-    If no <roleplay_instructions> block is found, the ENTIRE system text
-    becomes prompt_head (→ --system-prompt / API system block) and remainder
-    is empty.  This ensures the system prompt always reaches the model via
-    the API system block rather than being relegated to a CLAUDE.md file.
+    If no <roleplay_instructions> block is found, returns ("", original) so
+    the full system text goes to CLAUDE.md (safe for any size on Windows).
     """
     match = _PROMPT_HEAD_RE.search(system_text)
     if not match:
-        return system_text, ""
+        return "", system_text
     prompt_head = match.group(1).strip()
     remainder = _PROMPT_HEAD_RE.sub("", system_text).strip()
     return prompt_head, remainder
@@ -606,7 +609,7 @@ def _log_request(request_id: str, model: str, cmd: list[str],
                   stdin: str, response: str, elapsed: float):
     """Append a full request/response record to logs/requests.log."""
     sep = "=" * 72
-    # Build a readable CLI command string (mask the --system-prompt value since it can be huge)
+    # Build readable CLI command (mask long --system-prompt value)
     cmd_display = []
     skip_next = False
     for i, arg in enumerate(cmd):
@@ -614,7 +617,7 @@ def _log_request(request_id: str, model: str, cmd: list[str],
             skip_next = False
             continue
         if arg == "--system-prompt" and i + 1 < len(cmd):
-            cmd_display.append(f'--system-prompt "({len(cmd[i+1])} chars — see below)"')
+            cmd_display.append(f'--system-prompt "({len(cmd[i+1])} chars)"')
             skip_next = True
         else:
             cmd_display.append(arg)
@@ -627,10 +630,24 @@ def _log_request(request_id: str, model: str, cmd: list[str],
         f"{sep}\n"
         f"\n--- CLI COMMAND ---\n"
         f"{cmd_str}\n"
-        f"\n--- SYSTEM PROMPT (--system-prompt flag → API system block) ---\n"
-        f"{prompt_head or '(none — not set)'}\n"
-        f"\n--- CLAUDE.MD (written to temp dir → loaded as system-reminder) ---\n"
-        f"{claude_md or '(none — not used)'}\n"
+    )
+
+    if prompt_head:
+        entry += (
+            f"\n--- SYSTEM PROMPT via --system-prompt (API system block) ---\n"
+            f"{prompt_head}\n"
+        )
+
+    if claude_md:
+        entry += (
+            f"\n--- SYSTEM PROMPT via CLAUDE.MD (temp dir → <system-reminder>) ---\n"
+            f"{claude_md}\n"
+        )
+
+    if not prompt_head and not claude_md:
+        entry += "\n--- SYSTEM PROMPT ---\n(none)\n"
+
+    entry += (
         f"\n--- STDIN (conversation piped to claude -p) ---\n"
         f"{stdin}\n"
         f"\n--- RESPONSE ---\n"
