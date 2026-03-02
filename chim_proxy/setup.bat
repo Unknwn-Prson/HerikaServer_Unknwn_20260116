@@ -66,8 +66,8 @@ if %errorlevel% equ 0 (
     echo       Downloading and running Claude Code installer...
     curl -fsSL https://claude.ai/install.cmd -o "%TEMP%\claude_install.cmd"
     if %errorlevel% neq 0 (
-        echo [WARN] curl download failed. Trying winget...
-        winget install Anthropic.ClaudeCode --accept-source-agreements --accept-package-agreements >nul 2>&1
+        echo [WARN] curl download failed. Trying winget (this may take a minute)...
+        winget install Anthropic.ClaudeCode --accept-source-agreements --accept-package-agreements
         if %errorlevel% neq 0 (
             echo [ERROR] Both curl and winget failed to install Claude Code.
             echo        Try installing manually:
