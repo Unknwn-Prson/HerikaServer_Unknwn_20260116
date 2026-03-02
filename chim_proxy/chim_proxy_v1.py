@@ -1,5 +1,5 @@
 """
-OpenAI-compatible proxy using Claude Code CLI legitimately.  v0.9.4
+OpenAI-compatible proxy using Claude Code CLI legitimately.  v0.9.5
 
 Architecture:
   Per-request: spawns `claude -p` subprocess with minimal context flags.
@@ -1166,7 +1166,7 @@ async function testChat() {{
 
 
 if __name__ == "__main__":
-    print("\n  CHIM Proxy v0.9.4 — Startup Configuration\n")
+    print("\n  CHIM Proxy v0.9.5 — Startup Configuration\n")
     print("  Content format for system prompt and conversation:")
     print("    [1] Array  — preserve CHIM block structure (JSON arrays in CLAUDE.md and stdin)")
     print("    [2] Flat   — flatten to plain text (original behavior)")
