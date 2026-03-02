@@ -5,18 +5,19 @@ Architecture:
   Per-request: spawns `claude -p` subprocess with minimal context flags.
   No MITM, no auth interception, no direct API calls — just the CLI as intended.
 
-  Each request creates an isolated temp directory containing a CLAUDE.md file
-  with the NPC's full system prompt.  Claude Code auto-loads this as a
-  <system-reminder> with authority framing, giving it stronger weight than
-  plain text in stdin.  The temp dir is cleaned up after each response.
+  System prompt routing:
+    If the system message contains <roleplay_instructions>…</roleplay_instructions>,
+    the content inside becomes --system-prompt and the remainder goes to CLAUDE.md.
+    If NO tags are found, the ENTIRE system message goes to --system-prompt
+    (API system block) and CLAUDE.md is not created.
 
 Context minimization (applied per request):
   --tools=                    → removes ALL built-in tool descriptions (~10-16K tokens saved)
   --disable-slash-commands    → removes skill/slash-command descriptions from context
-  --system-prompt "..."       → CHIM's PROMPT_HEAD / <roleplay_instructions> (controls API system blocks)
+  --system-prompt "..."       → system message content (controls API system blocks)
   --max-turns 1               → single response, no tool loops
   --effort <level>            → reasoning effort: low, medium, high (when enabled)
-  CLAUDE.md in temp dir       → full NPC system prompt with authority framing
+  CLAUDE.md in temp dir       → remainder after tag split (authority-framed system-reminder)
   stdin                       → conversation messages only (dialogue history)
 
   Environment variables:
@@ -294,11 +295,14 @@ def _split_prompt_head(system_text: str) -> tuple[str, str]:
     Returns (prompt_head, remainder) where:
       - prompt_head: the content inside <roleplay_instructions>…</roleplay_instructions>
       - remainder:   everything else (for CLAUDE.md)
-    If no <roleplay_instructions> block is found, returns ("", original).
+    If no <roleplay_instructions> block is found, the ENTIRE system text
+    becomes prompt_head (→ --system-prompt / API system block) and remainder
+    is empty.  This ensures the system prompt always reaches the model via
+    the API system block rather than being relegated to a CLAUDE.md file.
     """
     match = _PROMPT_HEAD_RE.search(system_text)
     if not match:
-        return "", system_text
+        return system_text, ""
     prompt_head = match.group(1).strip()
     remainder = _PROMPT_HEAD_RE.sub("", system_text).strip()
     return prompt_head, remainder
@@ -597,17 +601,36 @@ def _analyze_overhead(api_body: dict, our_system_prompt: str, our_claude_md: str
     return "\n".join(lines)
 
 
-def _log_request(request_id: str, model: str, claude_md: Optional[str],
+def _log_request(request_id: str, model: str, cmd: list[str],
+                  prompt_head: str, claude_md: Optional[str],
                   stdin: str, response: str, elapsed: float):
     """Append a full request/response record to logs/requests.log."""
     sep = "=" * 72
+    # Build a readable CLI command string (mask the --system-prompt value since it can be huge)
+    cmd_display = []
+    skip_next = False
+    for i, arg in enumerate(cmd):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--system-prompt" and i + 1 < len(cmd):
+            cmd_display.append(f'--system-prompt "({len(cmd[i+1])} chars — see below)"')
+            skip_next = True
+        else:
+            cmd_display.append(arg)
+    cmd_str = " ".join(cmd_display)
+
     entry = (
         f"\n{sep}\n"
         f"REQUEST {request_id}  |  {time.strftime('%Y-%m-%d %H:%M:%S')}  |  "
         f"{model}  |  {elapsed:.1f}s\n"
         f"{sep}\n"
-        f"\n--- CLAUDE.MD (system prompt written to temp dir) ---\n"
-        f"{claude_md or '(none)'}\n"
+        f"\n--- CLI COMMAND ---\n"
+        f"{cmd_str}\n"
+        f"\n--- SYSTEM PROMPT (--system-prompt flag → API system block) ---\n"
+        f"{prompt_head or '(none — not set)'}\n"
+        f"\n--- CLAUDE.MD (written to temp dir → loaded as system-reminder) ---\n"
+        f"{claude_md or '(none — not used)'}\n"
         f"\n--- STDIN (conversation piped to claude -p) ---\n"
         f"{stdin}\n"
         f"\n--- RESPONSE ---\n"
@@ -741,13 +764,8 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
     logger.info(f"[{request_id}] <- {len(text)} chars ({elapsed:.1f}s)")
 
     # --- Per-request prompt log ---
-    # Log both prompt_head and claude.md content for debugging
-    log_system = ""
-    if prompt_head:
-        log_system += f"--- PROMPT_HEAD (--system-prompt) ---\n{prompt_head}\n\n"
-    if claude_md_content:
-        log_system += f"--- CLAUDE.MD ---\n{claude_md_content}"
-    _log_request(request_id, model, log_system or None, prompt, text, elapsed)
+    _log_request(request_id, model, cmd, prompt_head, claude_md_content,
+                 prompt, text, elapsed)
 
     return text
 
