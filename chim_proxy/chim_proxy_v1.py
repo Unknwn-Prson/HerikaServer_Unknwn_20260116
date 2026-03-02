@@ -52,6 +52,7 @@ import os
 import re
 import shutil
 import socket
+import ssl
 import sys
 import tempfile
 import threading
@@ -320,6 +321,14 @@ REQUEST_LOG = LOG_DIR / "requests.log"
 
 _ANTHROPIC_API_HOST = "api.anthropic.com"
 
+# SSL context for MITM → Anthropic connections.
+# Uses system CA certs; falls back to unverified if certs are missing (common in WSL).
+try:
+    _SSL_CTX = ssl.create_default_context()
+except ssl.SSLError:
+    _SSL_CTX = ssl._create_unverified_context()
+    logger.warning("SSL certificate verification disabled — system CA certs not found")
+
 
 class _CaptureHandler(http.server.BaseHTTPRequestHandler):
     """Tiny HTTP proxy that captures the POST body and forwards to Anthropic.
@@ -357,6 +366,9 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
         message as <system-reminder>...</system-reminder>.  This wastes
         tokens and is irrelevant to the actual conversation.  We strip it
         at the network layer so the model never sees it.
+
+        Safety: never leaves a message with empty content — the Anthropic
+        API would reject it with 400, causing the CLI to error out.
         """
         for msg in api_body.get("messages", []):
             if msg.get("role") != "user":
@@ -364,8 +376,9 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
             content = msg.get("content")
             if isinstance(content, str):
                 cleaned = self._SYSTEM_REMINDER_RE.sub("", content)
-                if cleaned != content:
+                if cleaned.strip():
                     msg["content"] = cleaned
+                # else: stripping would empty the message — leave it as-is
             elif isinstance(content, list):
                 new_blocks = []
                 for block in content:
@@ -378,7 +391,9 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
                         # else: entire block was a system-reminder — drop it
                     else:
                         new_blocks.append(block)
-                msg["content"] = new_blocks
+                # Safety: never set empty content — keep original if all blocks stripped
+                if new_blocks:
+                    msg["content"] = new_blocks
 
     def _rewrite_system_blocks(self, body: bytes) -> bytes:
         """Replace Claude Code's system blocks with our own content and
@@ -422,15 +437,19 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
             # Update captured body so logs reflect what the model actually receives
             self.server.captured_body = rewritten
             return rewritten
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[MITM] system block rewrite failed: {e}")
             return body  # Fall through with original on any error
 
     def _forward(self, method: str):
+        req_id = getattr(self.server, "_mitm_id", "?")
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length) if length else b""
+        logger.debug(f"[MITM-{req_id}] {method} {self.path} ({len(body)} bytes)")
         if method == "POST":
             self.server.captured_body = body
             body = self._rewrite_system_blocks(body)
+            logger.debug(f"[MITM-{req_id}] rewritten body: {len(body)} bytes")
 
         # Rebuild headers for the real API (update Content-Length if body was rewritten)
         fwd = {}
@@ -445,9 +464,30 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
         fwd["Host"] = _ANTHROPIC_API_HOST
 
         try:
-            conn = http.client.HTTPSConnection(_ANTHROPIC_API_HOST, timeout=300)
+            logger.debug(f"[MITM-{req_id}] connecting to {_ANTHROPIC_API_HOST}...")
+            conn = http.client.HTTPSConnection(_ANTHROPIC_API_HOST, timeout=300,
+                                                context=_SSL_CTX)
             conn.request(method, self.path, body or None, fwd)
             resp = conn.getresponse()
+            logger.debug(f"[MITM-{req_id}] API responded: {resp.status}")
+
+            if resp.status >= 400:
+                # Log API errors — these often explain silent failures
+                err_body = resp.read()
+                logger.warning(f"[MITM-{req_id}] API error {resp.status}: "
+                               f"{err_body[:500].decode(errors='replace')}")
+                self.send_response(resp.status)
+                for key, val in resp.getheaders():
+                    lk = key.lower()
+                    if lk in ("transfer-encoding", "connection"):
+                        continue
+                    self.send_header(key, val)
+                self.send_header("Content-Length", str(len(err_body)))
+                self.end_headers()
+                self.wfile.write(err_body)
+                self.wfile.flush()
+                conn.close()
+                return
 
             # Forward status + headers — use chunked TE for real-time streaming
             self.send_response(resp.status)
@@ -462,10 +502,12 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
             # Stream response through in real-time (critical for SSE)
             # read1() returns data from the buffer or a single recv() call,
             # so it yields data as soon as it arrives — no multi-second stalls.
+            total_bytes = 0
             while True:
                 chunk = resp.read1(16384)
                 if not chunk:
                     break
+                total_bytes += len(chunk)
                 # HTTP chunked encoding: hex-size CRLF data CRLF
                 self.wfile.write(f"{len(chunk):x}\r\n".encode())
                 self.wfile.write(chunk)
@@ -476,9 +518,11 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b"0\r\n\r\n")
             self.wfile.flush()
             conn.close()
+            logger.debug(f"[MITM-{req_id}] forwarded {total_bytes} bytes response")
         except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
-            pass  # Client disconnected — normal during subprocess cleanup
+            logger.debug(f"[MITM-{req_id}] client disconnected (normal)")
         except Exception as e:
+            logger.error(f"[MITM-{req_id}] forward error: {e}")
             try:
                 err = f"Proxy forward error: {e}".encode()
                 self.send_response(502)
@@ -859,9 +903,11 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
     if claude_md_content:
         replacement.append(claude_md_content)
     mitm.system_replacement = replacement if replacement else None
+    mitm._mitm_id = request_id  # Used for diagnostic logging in _CaptureHandler
     mitm_port = mitm.server_address[1]
     mitm_thread = threading.Thread(target=mitm.serve_forever, daemon=True)
     mitm_thread.start()
+    logger.debug(f"[{request_id}] MITM proxy on 127.0.0.1:{mitm_port}")
 
     # Per-request isolation: temp dir as cwd (no CLAUDE.md — content goes
     # directly into system blocks via MITM rewrite, avoiding the
@@ -1355,7 +1401,7 @@ async function testChat() {{
 
 
 if __name__ == "__main__":
-    print("\n  CHIM Proxy v0.9.8 — Startup Configuration\n")
+    print("\n  CHIM Proxy v0.9.9 — Startup Configuration\n")
     print("  Content format for system prompt and conversation:")
     print("    [1] Array  — preserve CHIM block structure (JSON arrays in CLAUDE.md and stdin)")
     print("    [2] Flat   — flatten to plain text (original behavior)")
