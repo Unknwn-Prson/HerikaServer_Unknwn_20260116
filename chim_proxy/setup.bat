@@ -1,20 +1,13 @@
 @echo off
-setlocal
 :: ============================================================
 :: CHIM Proxy v0.9.6 - One-Time Setup
 :: Must be run as Administrator!
 :: ============================================================
-:: Wrap in :main so pause ALWAYS runs, even on unexpected errors
-call :main
-echo.
-pause
-exit /b
-
-:main
 net session >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] This script must be run as Administrator!
     echo Right-click setup.bat and select "Run as administrator"
+    pause
     exit /b 1
 )
 
@@ -31,9 +24,11 @@ if %errorlevel% neq 0 (
     echo        Claude Code requires Git for Windows.
     echo        Download it from: https://git-scm.com/downloads/win
     echo        Install Git first, then re-run this setup.
+    pause
     exit /b 1
+) else (
+    echo       Found Git.
 )
-echo       Found Git.
 echo.
 
 :: 2. Check for Python
@@ -43,9 +38,11 @@ if %errorlevel% neq 0 (
     echo [ERROR] Python is not installed!
     echo        Download it from: https://www.python.org/downloads/
     echo        Make sure to check "Add Python to PATH" during install.
+    pause
     exit /b 1
+) else (
+    echo       Found Python.
 )
-echo       Found Python.
 echo.
 
 :: 3. Install Python dependencies
@@ -83,6 +80,7 @@ echo [ERROR] Both curl and winget failed to install Claude Code.
 echo        Try installing manually:
 echo          Option A: Open PowerShell and run: irm https://claude.ai/install.ps1 ^| iex
 echo          Option B: winget install Anthropic.ClaudeCode
+pause
 exit /b 1
 
 :claude_curl_ok
@@ -172,22 +170,21 @@ if %errorlevel% neq 0 (
     echo [WARN] 'claude' not found on PATH yet.
     echo        Restart your terminal and run: claude login
     echo        You need a Claude Pro, Max, or Teams subscription.
-    goto :login_done
-)
-echo       Launching Claude Code login...
-echo       A browser window should open. Sign in with your Anthropic account.
-echo       (You need a Claude Pro, Max, or Teams subscription.)
-echo.
-echo       NOTE: This opens an interactive session. Once you are logged in,
-echo       type /exit or press Ctrl+C to return to setup.
-echo.
-call claude login
-if %errorlevel% neq 0 (
-    echo [WARN] Login may not have completed. You can retry with: claude login
 ) else (
-    echo       Authenticated!
+    echo       Launching Claude Code login...
+    echo       A browser window should open. Sign in with your Anthropic account.
+    echo       (You need a Claude Pro, Max, or Teams subscription.)
+    echo.
+    echo       NOTE: This opens an interactive session. Once you are logged in,
+    echo       type /exit or press Ctrl+C to return to setup.
+    echo.
+    claude login
+    if %errorlevel% neq 0 (
+        echo [WARN] Login may not have completed. You can retry with: claude login
+    ) else (
+        echo       Authenticated!
+    )
 )
-:login_done
 echo.
 
 echo ============================================================
@@ -199,4 +196,4 @@ echo.
 echo  Your endpoint (from WSL/HerikaServer):
 echo    http://172.17.144.1:8000/v1/chat/completions
 echo ============================================================
-exit /b 0
+pause
