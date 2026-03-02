@@ -331,10 +331,22 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
 
     Captured body is stored on self.server.captured_body so each HTTPServer
     instance is isolated (safe for concurrent per-request MITM proxies).
+
+    CRITICAL: The response is streamed through in real-time using HTTP
+    chunked transfer encoding.  Anthropic sends SSE via chunked TE —
+    buffering the entire response before forwarding causes Claude CLI's
+    Node.js/libuv runtime to crash (UV_HANDLE_CLOSING assertion on Windows).
     """
 
     def log_message(self, *args):
         pass  # suppress default http.server logging
+
+    def handle_one_request(self):
+        """Override to suppress ConnectionResetError from keep-alive probes."""
+        try:
+            super().handle_one_request()
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+            self.close_connection = True
 
     def _forward(self, method: str):
         length = int(self.headers.get("Content-Length", 0))
@@ -350,25 +362,48 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
         fwd["Host"] = _ANTHROPIC_API_HOST
 
         try:
-            conn = http.client.HTTPSConnection(_ANTHROPIC_API_HOST)
+            conn = http.client.HTTPSConnection(_ANTHROPIC_API_HOST, timeout=300)
             conn.request(method, self.path, body or None, fwd)
             resp = conn.getresponse()
-            resp_body = resp.read()
 
+            # Forward status + headers — use chunked TE for real-time streaming
             self.send_response(resp.status)
             for key, val in resp.getheaders():
-                if key.lower() not in ("transfer-encoding", "content-length"):
-                    self.send_header(key, val)
-            self.send_header("Content-Length", str(len(resp_body)))
+                lk = key.lower()
+                if lk in ("transfer-encoding", "content-length", "connection"):
+                    continue
+                self.send_header(key, val)
+            self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
-            self.wfile.write(resp_body)
+
+            # Stream response through in real-time (critical for SSE)
+            # read1() returns data from the buffer or a single recv() call,
+            # so it yields data as soon as it arrives — no multi-second stalls.
+            while True:
+                chunk = resp.read1(16384)
+                if not chunk:
+                    break
+                # HTTP chunked encoding: hex-size CRLF data CRLF
+                self.wfile.write(f"{len(chunk):x}\r\n".encode())
+                self.wfile.write(chunk)
+                self.wfile.write(b"\r\n")
+                self.wfile.flush()
+
+            # Terminating zero-length chunk
+            self.wfile.write(b"0\r\n\r\n")
+            self.wfile.flush()
             conn.close()
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+            pass  # Client disconnected — normal during subprocess cleanup
         except Exception as e:
-            err = f"Proxy forward error: {e}".encode()
-            self.send_response(502)
-            self.send_header("Content-Length", str(len(err)))
-            self.end_headers()
-            self.wfile.write(err)
+            try:
+                err = f"Proxy forward error: {e}".encode()
+                self.send_response(502)
+                self.send_header("Content-Length", str(len(err)))
+                self.end_headers()
+                self.wfile.write(err)
+            except Exception:
+                pass  # Connection already broken, can't send error
 
     def do_POST(self):
         self._forward("POST")
