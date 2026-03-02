@@ -639,17 +639,49 @@ def _log_request(request_id: str, model: str, cmd: list[str],
         )
 
     if claude_md:
+        # Decode JSON block arrays to readable text for the log
+        readable = claude_md
+        try:
+            blocks = json.loads(claude_md)
+            if isinstance(blocks, list):
+                readable = "\n".join(
+                    b.get("text", "") for b in blocks if isinstance(b, dict)
+                )
+        except (json.JSONDecodeError, TypeError):
+            pass
         entry += (
             f"\n--- SYSTEM PROMPT via CLAUDE.MD (temp dir → <system-reminder>) ---\n"
-            f"{claude_md}\n"
+            f"{readable}\n"
         )
 
     if not prompt_head and not claude_md:
         entry += "\n--- SYSTEM PROMPT ---\n(none)\n"
 
+    # Decode stdin JSON to readable conversation for the log
+    readable_stdin = stdin
+    try:
+        msgs = json.loads(stdin)
+        if isinstance(msgs, list):
+            parts = []
+            for msg in msgs:
+                role = msg.get("role", "?")
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    text = "\n".join(
+                        b.get("text", "") for b in content if isinstance(b, dict)
+                    )
+                elif isinstance(content, str):
+                    text = content
+                else:
+                    text = str(content)
+                parts.append(f"[{role}]\n{text}")
+            readable_stdin = "\n\n".join(parts)
+    except (json.JSONDecodeError, TypeError):
+        pass
+
     entry += (
         f"\n--- STDIN (conversation piped to claude -p) ---\n"
-        f"{stdin}\n"
+        f"{readable_stdin}\n"
         f"\n--- RESPONSE ---\n"
         f"{response}\n"
         f"\n{sep}\n"
