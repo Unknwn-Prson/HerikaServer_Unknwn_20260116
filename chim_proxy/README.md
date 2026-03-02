@@ -1,4 +1,4 @@
-# CHIM Proxy v0.9.2
+# CHIM Proxy v0.9.6
 
 An OpenAI-compatible API proxy that routes requests through a Claude subscription via the Claude Code CLI. Designed for use with [CHIM](https://github.com/MinLL/SkyrimNet-GamePlugin) to power AI-driven NPC conversations in Skyrim.
 

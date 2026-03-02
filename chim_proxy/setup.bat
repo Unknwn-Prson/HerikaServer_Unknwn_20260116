@@ -1,7 +1,7 @@
 @echo off
 setlocal
 :: ============================================================
-:: CHIM Proxy v0.9.5 - One-Time Setup
+:: CHIM Proxy v0.9.6 - One-Time Setup
 :: Must be run as Administrator!
 :: ============================================================
 :: Wrap in :main so pause ALWAYS runs, even on unexpected errors
@@ -19,7 +19,7 @@ if %errorlevel% neq 0 (
 )
 
 echo ============================================================
-echo  CHIM Proxy v0.9.5 - Setup
+echo  CHIM Proxy v0.9.6 - Setup
 echo ============================================================
 echo.
 
