@@ -325,7 +325,7 @@ _ANTHROPIC_API_HOST = "api.anthropic.com"
 # Uses system CA certs; falls back to unverified if certs are missing (common in WSL).
 try:
     _SSL_CTX = ssl.create_default_context()
-except ssl.SSLError:
+except Exception:
     _SSL_CTX = ssl._create_unverified_context()
     logger.warning("SSL certificate verification disabled — system CA certs not found")
 
@@ -445,11 +445,11 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
         req_id = getattr(self.server, "_mitm_id", "?")
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length) if length else b""
-        logger.debug(f"[MITM-{req_id}] {method} {self.path} ({len(body)} bytes)")
+        logger.info(f"[MITM-{req_id}] {method} {self.path} ({len(body)} bytes)")
         if method == "POST":
             self.server.captured_body = body
             body = self._rewrite_system_blocks(body)
-            logger.debug(f"[MITM-{req_id}] rewritten body: {len(body)} bytes")
+            logger.info(f"[MITM-{req_id}] rewritten body: {len(body)} bytes")
 
         # Rebuild headers for the real API (update Content-Length if body was rewritten)
         fwd = {}
@@ -464,12 +464,12 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
         fwd["Host"] = _ANTHROPIC_API_HOST
 
         try:
-            logger.debug(f"[MITM-{req_id}] connecting to {_ANTHROPIC_API_HOST}...")
+            logger.info(f"[MITM-{req_id}] connecting to {_ANTHROPIC_API_HOST}...")
             conn = http.client.HTTPSConnection(_ANTHROPIC_API_HOST, timeout=300,
                                                 context=_SSL_CTX)
             conn.request(method, self.path, body or None, fwd)
             resp = conn.getresponse()
-            logger.debug(f"[MITM-{req_id}] API responded: {resp.status}")
+            logger.info(f"[MITM-{req_id}] API responded: {resp.status}")
 
             if resp.status >= 400:
                 # Log API errors — these often explain silent failures
@@ -518,9 +518,9 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b"0\r\n\r\n")
             self.wfile.flush()
             conn.close()
-            logger.debug(f"[MITM-{req_id}] forwarded {total_bytes} bytes response")
+            logger.info(f"[MITM-{req_id}] forwarded {total_bytes} bytes response")
         except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
-            logger.debug(f"[MITM-{req_id}] client disconnected (normal)")
+            logger.info(f"[MITM-{req_id}] client disconnected (normal)")
         except Exception as e:
             logger.error(f"[MITM-{req_id}] forward error: {e}")
             try:
@@ -907,7 +907,7 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
     mitm_port = mitm.server_address[1]
     mitm_thread = threading.Thread(target=mitm.serve_forever, daemon=True)
     mitm_thread.start()
-    logger.debug(f"[{request_id}] MITM proxy on 127.0.0.1:{mitm_port}")
+    logger.info(f"[{request_id}] MITM proxy on 127.0.0.1:{mitm_port}")
 
     # Per-request isolation: temp dir as cwd (no CLAUDE.md — content goes
     # directly into system blocks via MITM rewrite, avoiding the
