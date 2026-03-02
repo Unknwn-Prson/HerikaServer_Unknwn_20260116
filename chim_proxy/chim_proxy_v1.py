@@ -1,28 +1,23 @@
 """
-OpenAI-compatible proxy using Claude Code CLI legitimately.  v0.9.8
+OpenAI-compatible proxy using Claude Code CLI legitimately.  v0.9.9
 
 Architecture:
-  Per-request: spawns `claude -p` subprocess with minimal context flags.
-  No MITM, no auth interception, no direct API calls — just the CLI as intended.
+  Per-request: spawns `claude -p` subprocess routed through a local MITM
+  HTTP proxy that intercepts the Claude Code → Anthropic API call.
 
-  System prompt routing:
-    If the system message contains <roleplay_instructions>…</roleplay_instructions>:
-      - Content inside tags  → --system-prompt (API system block, short)
-      - Everything else      → CLAUDE.md in temp dir (<system-reminder> framing)
-    If NO tags:
-      - Entire system message → CLAUDE.md (can't use --system-prompt on Windows
-        for long content due to 32K CreateProcess arg limit)
-
-  Claude Code auto-loads CLAUDE.md as a <system-reminder> with authority
-  framing.  The temp dir is cleaned up after each response.
+  System prompt delivery (MITM rewrite):
+    The MITM proxy intercepts POST requests to api.anthropic.com and:
+      1. Strips Claude Code's injected system blocks (agent/coding prompts)
+      2. Injects CHIM content directly into API system blocks with
+         cache_control: {'type': 'ephemeral'} for prompt caching
+      3. Strips <system-reminder> context injections from user messages
+    This bypasses CLAUDE.md entirely — no <system-reminder> wrapper overhead.
 
 Context minimization (applied per request):
   --tools=                    → removes ALL built-in tool descriptions (~10-16K tokens saved)
   --disable-slash-commands    → removes skill/slash-command descriptions from context
-  --system-prompt "..."       → short <roleplay_instructions> only (if present)
   --max-turns 1               → single response, no tool loops
   --effort <level>            → reasoning effort: low, medium, high (when enabled)
-  CLAUDE.md in temp dir       → bulk system prompt with authority framing
   stdin                       → conversation messages only (dialogue history)
 
   Environment variables:
@@ -35,7 +30,7 @@ Performance notes:
   No persistent connection reuse — each subprocess opens its own connection.
 
 Content format (selectable at startup):
-  Array mode  → preserves CHIM's block structure as JSON arrays in CLAUDE.md and stdin
+  Array mode  → preserves CHIM's block structure as JSON arrays in stdin
   Flat mode   → flattens content to plain text (original behavior)
 
 NPC name handling:
@@ -348,16 +343,54 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
         except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
             self.close_connection = True
 
+    # Regex to match <system-reminder>...</system-reminder> blocks injected
+    # by Claude Code into user messages (e.g. currentDate context).
+    # DOTALL so . matches newlines within the tag.
+    _SYSTEM_REMINDER_RE = re.compile(
+        r'<system-reminder>.*?</system-reminder>\s*', re.DOTALL
+    )
+
+    def _strip_system_reminders(self, api_body: dict) -> None:
+        """Remove <system-reminder> tags from user message content blocks.
+
+        Claude Code injects context like currentDate into the first user
+        message as <system-reminder>...</system-reminder>.  This wastes
+        tokens and is irrelevant to the actual conversation.  We strip it
+        at the network layer so the model never sees it.
+        """
+        for msg in api_body.get("messages", []):
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content")
+            if isinstance(content, str):
+                cleaned = self._SYSTEM_REMINDER_RE.sub("", content)
+                if cleaned != content:
+                    msg["content"] = cleaned
+            elif isinstance(content, list):
+                new_blocks = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text", "")
+                        cleaned = self._SYSTEM_REMINDER_RE.sub("", text)
+                        if cleaned.strip():
+                            block["text"] = cleaned
+                            new_blocks.append(block)
+                        # else: entire block was a system-reminder — drop it
+                    else:
+                        new_blocks.append(block)
+                msg["content"] = new_blocks
+
     def _rewrite_system_blocks(self, body: bytes) -> bytes:
-        """Replace Claude Code's system blocks with our own content.
+        """Replace Claude Code's system blocks with our own content and
+        strip <system-reminder> tags from user messages.
 
-        Claude Code injects 2-3 system blocks beyond the billing header:
+        System block rewrite:
           Block 0: billing metadata (no cache_control) — KEEP
-          Block 1: "You are a Claude agent..." — STRIP
-          Block 2: full coding-assistant system prompt — STRIP
+          Block 1+: Claude Code agent/coding prompts — STRIP
+          Replaced with our PROMPT_HEAD and CHIM content blocks.
 
-        We replace blocks 1+ with our PROMPT_HEAD and CLAUDE.md content,
-        each with cache_control: {'type': 'ephemeral'} for prompt caching.
+        User message cleanup:
+          <system-reminder>...</system-reminder> context injections — STRIP
         """
         replacement = getattr(self.server, "system_replacement", None)
         if not replacement:
@@ -380,6 +413,10 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
                 })
 
             api_body["system"] = new_system
+
+            # Strip <system-reminder> injections from user messages
+            self._strip_system_reminders(api_body)
+
             rewritten = json.dumps(api_body, ensure_ascii=False).encode("utf-8")
 
             # Update captured body so logs reflect what the model actually receives
