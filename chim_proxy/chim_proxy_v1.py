@@ -446,6 +446,10 @@ async def capture_system_prompt(model: str = "claude-haiku-4-5-20251001") -> Opt
     Capture the FULL API request body by routing Claude CLI through a local
     HTTP proxy.  Sets ANTHROPIC_BASE_URL so the SDK sends the request to us
     instead of api.anthropic.com; we log it, then forward it to the real API.
+
+    Matches real request conditions: sends --system-prompt (like PROMPT_HEAD)
+    AND writes CLAUDE.md (like NPC bio/instructions), so the capture shows
+    exactly what the model receives during actual gameplay.
     """
     _CaptureHandler.captured_body = b""
 
@@ -460,15 +464,24 @@ async def capture_system_prompt(model: str = "claude-haiku-4-5-20251001") -> Opt
     env = _ENV.copy()
     env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{port}"
 
-    cmd = _build_cmd(model)
+    # Use --system-prompt to match real conditions (PROMPT_HEAD goes here)
+    test_system_prompt = (
+        "[CAPTURE-TEST-SYSTEM-PROMPT]\n"
+        "You are roleplaying as a character in The Elder Scrolls V: Skyrim.\n"
+        "Stay in character at all times."
+    )
+    cmd = _build_cmd(model, system_prompt=test_system_prompt)
     req_dir = tempfile.mkdtemp(prefix="claude-capture-")
     try:
-        # Write a generic test CLAUDE.md — no specific NPC, just verifies
-        # the injection path so the log shows where CLAUDE.md content lands
+        # Write a test CLAUDE.md — verifies whether the CLAUDE.md injection
+        # path works alongside --system-prompt (docs claim it doesn't, but
+        # empirical evidence shows it does)
         test_bio = (
+            "[CAPTURE-TEST-CLAUDE-MD]\n"
             "You are a guard in Whiterun.\n"
             "Respond briefly and in character.\n"
-            "[CAPTURE TEST — this text verifies the CLAUDE.md injection path]"
+            "This text verifies whether CLAUDE.md is loaded when "
+            "--system-prompt is also set."
         )
         (Path(req_dir) / "CLAUDE.md").write_text(test_bio, encoding="utf-8")
 
@@ -509,12 +522,79 @@ async def capture_system_prompt(model: str = "claude-haiku-4-5-20251001") -> Opt
         return result
 
     result = _format_api_body(api_body)
+
+    # Append overhead analysis — helps determine what Claude Code adds
+    result += _analyze_overhead(api_body, test_system_prompt, test_bio)
+
     SYSTEM_PROMPT_LOG.write_text(result, encoding="utf-8")
     n_sys = len(api_body.get("system", []))
     n_msg = len(api_body.get("messages", []))
     logger.info(f"Full API body captured ({n_sys} system blocks, {n_msg} messages) "
                 f"-> {SYSTEM_PROMPT_LOG}")
     return result
+
+
+def _analyze_overhead(api_body: dict, our_system_prompt: str, our_claude_md: str) -> str:
+    """Analyze how much overhead Claude Code adds beyond our content."""
+    lines = [
+        "",
+        "=" * 72,
+        "OVERHEAD ANALYSIS",
+        "=" * 72,
+        "",
+    ]
+
+    # Measure system blocks
+    system_blocks = api_body.get("system", [])
+    total_system_chars = 0
+    our_system_chars = 0
+    for block in system_blocks:
+        text = block.get("text", "") if isinstance(block, dict) else str(block)
+        total_system_chars += len(text)
+        if "[CAPTURE-TEST-SYSTEM-PROMPT]" in text:
+            our_system_chars += len(our_system_prompt)
+
+    overhead_system_chars = total_system_chars - our_system_chars
+    lines.append(f"System blocks: {len(system_blocks)} total, {total_system_chars} chars")
+    lines.append(f"  Our --system-prompt content: {our_system_chars} chars")
+    lines.append(f"  Claude Code overhead: {overhead_system_chars} chars")
+    lines.append("")
+
+    # Check if CLAUDE.md was loaded in user messages
+    messages = api_body.get("messages", [])
+    claude_md_found = False
+    claude_md_wrapper_chars = 0
+    total_user_msg_chars = 0
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            total_user_msg_chars += len(content)
+            if "[CAPTURE-TEST-CLAUDE-MD]" in content:
+                claude_md_found = True
+                claude_md_wrapper_chars = len(content) - len(our_claude_md)
+        elif isinstance(content, list):
+            for block in content:
+                text = block.get("text", "") if isinstance(block, dict) else ""
+                total_user_msg_chars += len(text)
+                if "[CAPTURE-TEST-CLAUDE-MD]" in text:
+                    claude_md_found = True
+                    claude_md_wrapper_chars = len(text) - len(our_claude_md)
+
+    lines.append(f"CLAUDE.md loaded despite --system-prompt: {'YES' if claude_md_found else 'NO'}")
+    if claude_md_found:
+        lines.append(f"  CLAUDE.md wrapper/framing overhead: {claude_md_wrapper_chars} chars")
+    lines.append(f"  Total user message chars: {total_user_msg_chars}")
+    lines.append("")
+
+    # Summary
+    total_overhead = overhead_system_chars + (claude_md_wrapper_chars if claude_md_found else 0)
+    lines.append(f"TOTAL OVERHEAD (chars Claude Code adds beyond our content): {total_overhead}")
+    lines.append(f"  Estimated tokens (chars / 4): ~{total_overhead // 4}")
+    lines.append("")
+
+    return "\n".join(lines)
 
 
 def _log_request(request_id: str, model: str, claude_md: Optional[str],
@@ -888,7 +968,15 @@ async def health():
 @app.get("/debug/system-prompt")
 async def debug_system_prompt(refresh: bool = False):
     """
-    Return the real system prompt that Claude Code sends to the API.
+    Return the real API request body that Claude Code sends, captured by
+    routing the CLI through a local HTTP proxy.
+
+    Matches real request conditions: uses --system-prompt (like PROMPT_HEAD)
+    AND CLAUDE.md (like NPC bio), so you see exactly what the model gets.
+
+    Includes an OVERHEAD ANALYSIS section showing how many chars/tokens
+    Claude Code adds beyond our content.
+
     Captured on startup; pass ?refresh=true to re-capture.
     """
     if refresh or not SYSTEM_PROMPT_LOG.exists():
