@@ -1,13 +1,20 @@
 @echo off
+setlocal
 :: ============================================================
 :: CHIM Proxy v0.9.5 - One-Time Setup
 :: Must be run as Administrator!
 :: ============================================================
+:: Wrap in :main so pause ALWAYS runs, even on unexpected errors
+call :main
+echo.
+pause
+exit /b
+
+:main
 net session >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] This script must be run as Administrator!
     echo Right-click setup.bat and select "Run as administrator"
-    pause
     exit /b 1
 )
 
@@ -24,11 +31,9 @@ if %errorlevel% neq 0 (
     echo        Claude Code requires Git for Windows.
     echo        Download it from: https://git-scm.com/downloads/win
     echo        Install Git first, then re-run this setup.
-    pause
     exit /b 1
-) else (
-    echo       Found Git.
 )
+echo       Found Git.
 echo.
 
 :: 2. Check for Python
@@ -38,11 +43,9 @@ if %errorlevel% neq 0 (
     echo [ERROR] Python is not installed!
     echo        Download it from: https://www.python.org/downloads/
     echo        Make sure to check "Add Python to PATH" during install.
-    pause
     exit /b 1
-) else (
-    echo       Found Python.
 )
+echo       Found Python.
 echo.
 
 :: 3. Install Python dependencies
@@ -62,27 +65,31 @@ echo [4/8] Installing Claude Code...
 where claude >nul 2>&1
 if %errorlevel% equ 0 (
     echo       Claude Code is already installed.
-) else (
-    echo       Downloading and running Claude Code installer...
-    curl -fsSL https://claude.ai/install.cmd -o "%TEMP%\claude_install.cmd"
-    if %errorlevel% neq 0 (
-        echo [WARN] curl download failed. Trying winget (this may take a minute)...
-        winget install Anthropic.ClaudeCode --accept-source-agreements --accept-package-agreements
-        if %errorlevel% neq 0 (
-            echo [ERROR] Both curl and winget failed to install Claude Code.
-            echo        Try installing manually:
-            echo          Option A: Open PowerShell and run: irm https://claude.ai/install.ps1 ^| iex
-            echo          Option B: winget install Anthropic.ClaudeCode
-            pause
-            exit /b 1
-        )
-        echo       Installed via winget.
-        goto :claude_ensure_path
-    )
-    call "%TEMP%\claude_install.cmd"
-    del "%TEMP%\claude_install.cmd" >nul 2>&1
-    echo       Done!
+    goto :claude_ensure_path
 )
+
+echo       Downloading and running Claude Code installer...
+curl -fsSL https://claude.ai/install.cmd -o "%TEMP%\claude_install.cmd"
+if %errorlevel% equ 0 goto :claude_curl_ok
+
+echo [WARN] curl download failed. Trying winget ^(this may take a minute^)...
+winget install Anthropic.ClaudeCode --accept-source-agreements --accept-package-agreements
+if %errorlevel% equ 0 (
+    echo       Installed via winget.
+    goto :claude_ensure_path
+)
+
+echo [ERROR] Both curl and winget failed to install Claude Code.
+echo        Try installing manually:
+echo          Option A: Open PowerShell and run: irm https://claude.ai/install.ps1 ^| iex
+echo          Option B: winget install Anthropic.ClaudeCode
+exit /b 1
+
+:claude_curl_ok
+:: Run installer in a child process so its exit cannot kill this script
+cmd /c call "%TEMP%\claude_install.cmd"
+del "%TEMP%\claude_install.cmd" >nul 2>&1
+echo       Done!
 
 :: Ensure Claude Code is on PATH (the native installer sometimes forgets)
 :claude_ensure_path
@@ -132,16 +139,17 @@ echo [6/8] Adding Windows Firewall rule for port 8000...
 netsh advfirewall firewall show rule name="CHIM Proxy" >nul 2>&1
 if %errorlevel% equ 0 (
     echo       Rule already exists, skipping.
-) else (
-    netsh advfirewall firewall add rule name="CHIM Proxy" dir=in action=allow protocol=TCP localport=8000 >nul 2>&1
-    if %errorlevel% equ 0 (
-        echo       Done!
-    ) else (
-        echo [WARN] Failed to add firewall rule.
-        echo        You can add it manually in Windows Firewall settings
-        echo        or run: netsh advfirewall firewall add rule name="CHIM Proxy" dir=in action=allow protocol=TCP localport=8000
-    )
+    goto :firewall_done
 )
+netsh advfirewall firewall add rule name="CHIM Proxy" dir=in action=allow protocol=TCP localport=8000 >nul 2>&1
+if %errorlevel% equ 0 (
+    echo       Done!
+) else (
+    echo [WARN] Failed to add firewall rule.
+    echo        You can add it manually in Windows Firewall settings
+    echo        or run: netsh advfirewall firewall add rule name="CHIM Proxy" dir=in action=allow protocol=TCP localport=8000
+)
+:firewall_done
 echo.
 
 :: 7. Port proxy so WSL can reach the proxy on Windows
@@ -164,21 +172,22 @@ if %errorlevel% neq 0 (
     echo [WARN] 'claude' not found on PATH yet.
     echo        Restart your terminal and run: claude login
     echo        You need a Claude Pro, Max, or Teams subscription.
-) else (
-    echo       Launching Claude Code login...
-    echo       A browser window should open. Sign in with your Anthropic account.
-    echo       (You need a Claude Pro, Max, or Teams subscription.)
-    echo.
-    echo       NOTE: This opens an interactive session. Once you are logged in,
-    echo       type /exit or press Ctrl+C to return to setup.
-    echo.
-    claude login
-    if %errorlevel% neq 0 (
-        echo [WARN] Login may not have completed. You can retry with: claude login
-    ) else (
-        echo       Authenticated!
-    )
+    goto :login_done
 )
+echo       Launching Claude Code login...
+echo       A browser window should open. Sign in with your Anthropic account.
+echo       (You need a Claude Pro, Max, or Teams subscription.)
+echo.
+echo       NOTE: This opens an interactive session. Once you are logged in,
+echo       type /exit or press Ctrl+C to return to setup.
+echo.
+claude login
+if %errorlevel% neq 0 (
+    echo [WARN] Login may not have completed. You can retry with: claude login
+) else (
+    echo       Authenticated!
+)
+:login_done
 echo.
 
 echo ============================================================
@@ -190,4 +199,4 @@ echo.
 echo  Your endpoint (from WSL/HerikaServer):
 echo    http://172.17.144.1:8000/v1/chat/completions
 echo ============================================================
-pause
+exit /b 0
