@@ -69,7 +69,7 @@ from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("proxy")
 
-DEFAULT_MODEL = "claude-opus-4-5-20250929"
+DEFAULT_MODEL = "claude-opus-4-5-20251101"
 
 # Known provider prefixes to strip from model names (e.g. "anthropic/claude-sonnet-4-6" → "claude-sonnet-4-6")
 _PROVIDER_PREFIXES = ("anthropic/", "openrouter/", "openai/")
@@ -861,7 +861,7 @@ async def list_models():
     return {
         "object": "list",
         "data": [
-            {"id": "claude-opus-4-5-20250929", "object": "model", "owned_by": "anthropic"},
+            {"id": "claude-opus-4-5-20251101", "object": "model", "owned_by": "anthropic"},
             {"id": "claude-opus-4-6", "object": "model", "owned_by": "anthropic"},
             {"id": "claude-sonnet-4-6", "object": "model", "owned_by": "anthropic"},
             {"id": "claude-sonnet-4-5-20250929", "object": "model", "owned_by": "anthropic"},
@@ -926,7 +926,7 @@ async def debug_requests(last: int = 5):
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     models = [
-        ("claude-opus-4-5-20250929", "Opus 4.5", "Most capable (default)"),
+        ("claude-opus-4-5-20251101", "Opus 4.5", "Most capable (default)"),
         ("claude-opus-4-6", "Opus 4.6", "Latest Opus"),
         ("claude-sonnet-4-6", "Sonnet 4.6", "Best balance"),
         ("claude-sonnet-4-5-20250929", "Sonnet 4.5", "Previous gen"),
