@@ -1,5 +1,5 @@
 """
-OpenAI-compatible proxy using Claude Code CLI legitimately.  v0.9.3
+OpenAI-compatible proxy using Claude Code CLI legitimately.  v0.9.4
 
 Architecture:
   Per-request: spawns `claude -p` subprocess with minimal context flags.
@@ -1011,9 +1011,9 @@ async def dashboard():
       <tr><td class="label">--max-turns 1</td>
         <td class="value" style="color:#4ade80">single response, no tool loops</td></tr>
       <tr><td class="label">--system-prompt</td>
-        <td class="value" style="color:#4ade80">short roleplay directive (API system blocks)</td></tr>
+        <td class="value" style="color:#4ade80">PROMPT_HEAD / &lt;roleplay_instructions&gt; (API system blocks)</td></tr>
       <tr><td class="label">CLAUDE.md per request</td>
-        <td class="value" style="color:#4ade80">NPC bio &rarr; &lt;system-reminder&gt; with authority framing</td></tr>
+        <td class="value" style="color:#4ade80">character + knowledge + instructions &rarr; &lt;system-reminder&gt;</td></tr>
       <tr><td class="label">stdin</td>
         <td class="value" style="color:#4ade80">conversation messages only (dialogue)</td></tr>
       <tr><td class="label">--effort</td>
@@ -1078,7 +1078,7 @@ async function testChat() {{
 
 
 if __name__ == "__main__":
-    print("\n  CHIM Proxy v0.9.3 — Startup Configuration\n")
+    print("\n  CHIM Proxy v0.9.4 — Startup Configuration\n")
     print("  Content format for system prompt and conversation:")
     print("    [1] Array  — preserve CHIM block structure (JSON arrays in CLAUDE.md and stdin)")
     print("    [2] Flat   — flatten to plain text (original behavior)")
