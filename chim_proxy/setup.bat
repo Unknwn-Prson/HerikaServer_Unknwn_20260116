@@ -1,6 +1,6 @@
 @echo off
 :: ============================================================
-:: CHIM Proxy v0.9.2 - One-Time Setup
+:: CHIM Proxy v0.9.5 - One-Time Setup
 :: Must be run as Administrator!
 :: ============================================================
 net session >nul 2>&1
@@ -12,7 +12,7 @@ if %errorlevel% neq 0 (
 )
 
 echo ============================================================
-echo  CHIM Proxy v0.9.2 - Setup
+echo  CHIM Proxy v0.9.5 - Setup
 echo ============================================================
 echo.
 
@@ -66,20 +66,60 @@ if %errorlevel% equ 0 (
     echo       Downloading and running Claude Code installer...
     curl -fsSL https://claude.ai/install.cmd -o "%TEMP%\claude_install.cmd"
     if %errorlevel% neq 0 (
-        echo [ERROR] Failed to download Claude Code installer.
-        echo        Try installing manually:
-        echo          Open PowerShell and run: irm https://claude.ai/install.ps1 ^| iex
-        pause
-        exit /b 1
+        echo [WARN] curl download failed. Trying winget...
+        winget install Anthropic.ClaudeCode --accept-source-agreements --accept-package-agreements >nul 2>&1
+        if %errorlevel% neq 0 (
+            echo [ERROR] Both curl and winget failed to install Claude Code.
+            echo        Try installing manually:
+            echo          Option A: Open PowerShell and run: irm https://claude.ai/install.ps1 ^| iex
+            echo          Option B: winget install Anthropic.ClaudeCode
+            pause
+            exit /b 1
+        )
+        echo       Installed via winget.
+        goto :claude_ensure_path
     )
     call "%TEMP%\claude_install.cmd"
     del "%TEMP%\claude_install.cmd" >nul 2>&1
     echo       Done!
-    echo.
-    echo       NOTE: You may need to restart this terminal for 'claude'
-    echo       to appear on your PATH. If step 5 fails, close this window,
-    echo       re-open as Administrator, and re-run setup.bat.
 )
+
+:: Ensure Claude Code is on PATH (the native installer sometimes forgets)
+:claude_ensure_path
+where claude >nul 2>&1
+if %errorlevel% equ 0 goto :claude_path_ok
+
+:: Check common install locations and add to PATH if found
+set "CLAUDE_BIN="
+if exist "%USERPROFILE%\.local\bin\claude.exe" set "CLAUDE_BIN=%USERPROFILE%\.local\bin"
+if exist "%LOCALAPPDATA%\Microsoft\WinGet\Links\claude.exe" set "CLAUDE_BIN=%LOCALAPPDATA%\Microsoft\WinGet\Links"
+if exist "%LOCALAPPDATA%\Programs\claude-code\claude.exe" set "CLAUDE_BIN=%LOCALAPPDATA%\Programs\claude-code"
+
+if not defined CLAUDE_BIN (
+    echo [WARN] Could not locate claude.exe after install.
+    echo        You may need to install manually and restart your terminal.
+    goto :claude_path_done
+)
+
+echo       Adding %CLAUDE_BIN% to user PATH...
+:: Add to persistent user PATH via registry
+for /f "tokens=2,*" %%A in ('reg query "HKCU\Environment" /v Path 2^>nul') do set "USER_PATH=%%B"
+if not defined USER_PATH set "USER_PATH="
+echo %USER_PATH% | findstr /I /C:"%CLAUDE_BIN%" >nul 2>&1
+if %errorlevel% neq 0 (
+    if "%USER_PATH%"=="" (
+        setx PATH "%CLAUDE_BIN%" >nul 2>&1
+    ) else (
+        setx PATH "%USER_PATH%;%CLAUDE_BIN%" >nul 2>&1
+    )
+    echo       Persisted to user PATH.
+)
+:: Also add to current session so the rest of setup works
+set "PATH=%PATH%;%CLAUDE_BIN%"
+
+:claude_path_ok
+echo       Claude Code is on PATH.
+:claude_path_done
 echo.
 
 :: 5. Ensure HTTP_TIMEOUT in HerikaServer conf.php is at least 30s
