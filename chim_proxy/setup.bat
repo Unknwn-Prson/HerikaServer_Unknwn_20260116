@@ -181,7 +181,7 @@ echo.
 echo       NOTE: This opens an interactive session. Once you are logged in,
 echo       type /exit or press Ctrl+C to return to setup.
 echo.
-claude login
+call claude login
 if %errorlevel% neq 0 (
     echo [WARN] Login may not have completed. You can retry with: claude login
 ) else (
