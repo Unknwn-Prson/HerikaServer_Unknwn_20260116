@@ -1,5 +1,5 @@
 """
-OpenAI-compatible proxy using Claude Code CLI legitimately.  v0.9.7
+OpenAI-compatible proxy using Claude Code CLI legitimately.  v0.9.8
 
 Architecture:
   Per-request: spawns `claude -p` subprocess with minimal context flags.
@@ -348,17 +348,63 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
         except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
             self.close_connection = True
 
+    def _rewrite_system_blocks(self, body: bytes) -> bytes:
+        """Replace Claude Code's system blocks with our own content.
+
+        Claude Code injects 2-3 system blocks beyond the billing header:
+          Block 0: billing metadata (no cache_control) — KEEP
+          Block 1: "You are a Claude agent..." — STRIP
+          Block 2: full coding-assistant system prompt — STRIP
+
+        We replace blocks 1+ with our PROMPT_HEAD and CLAUDE.md content,
+        each with cache_control: {'type': 'ephemeral'} for prompt caching.
+        """
+        replacement = getattr(self.server, "system_replacement", None)
+        if not replacement:
+            return body
+        try:
+            api_body = json.loads(body)
+            old_system = api_body.get("system", [])
+            new_system = []
+
+            # Keep block 0 (billing/metadata — identified by lack of cache_control)
+            if old_system and isinstance(old_system[0], dict) and not old_system[0].get("cache_control"):
+                new_system.append(old_system[0])
+
+            # Inject our content blocks with ephemeral caching
+            for text in replacement:
+                new_system.append({
+                    "type": "text",
+                    "text": text,
+                    "cache_control": {"type": "ephemeral"},
+                })
+
+            api_body["system"] = new_system
+            rewritten = json.dumps(api_body, ensure_ascii=False).encode("utf-8")
+
+            # Update captured body so logs reflect what the model actually receives
+            self.server.captured_body = rewritten
+            return rewritten
+        except Exception:
+            return body  # Fall through with original on any error
+
     def _forward(self, method: str):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length) if length else b""
         if method == "POST":
             self.server.captured_body = body
+            body = self._rewrite_system_blocks(body)
 
-        # Rebuild headers for the real API
+        # Rebuild headers for the real API (update Content-Length if body was rewritten)
         fwd = {}
         for key, val in self.headers.items():
-            if key.lower() != "host":
-                fwd[key] = val
+            lk = key.lower()
+            if lk == "host":
+                continue
+            if lk == "content-length":
+                fwd[key] = str(len(body)) if body else "0"
+                continue
+            fwd[key] = val
         fwd["Host"] = _ANTHROPIC_API_HOST
 
         try:
@@ -645,10 +691,9 @@ def _log_request(request_id: str, model: str, elapsed: float,
                   api_body: Optional[dict], response_text: str):
     """Append a full request/response record to logs/requests.log.
 
-    api_body is the REAL API request body captured by the per-request MITM
-    proxy — it contains literally every token sent to the model: system
-    blocks (Claude Code overhead + our --system-prompt + <system-reminder>
-    from CLAUDE.md), all messages, and all parameters.
+    api_body is the REWRITTEN API request body — after the MITM proxy strips
+    Claude Code's default system blocks and injects our PROMPT_HEAD + character
+    content.  This reflects exactly what the model receives.
     """
     sep = "=" * 72
     entry = (
@@ -735,21 +780,21 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
                       conversation: list[dict],
                       model: str, effort: str = "", thinking_tokens: int = 0) -> str:
     """
-    Spawn claude -p in a per-request temp dir with CLAUDE.md for the system prompt.
+    Spawn claude -p in a per-request temp dir.
 
     Each request is routed through a per-request MITM proxy that intercepts the
-    actual API call from Claude Code → Anthropic.  This lets us log literally
-    every token the model receives (system blocks, messages, tool descriptions,
-    etc.) before forwarding to the real API.
+    actual API call from Claude Code → Anthropic.  The proxy rewrites the system
+    blocks — stripping Claude Code's default agent/coding-assistant prompts and
+    injecting our PROMPT_HEAD + character content with ephemeral caching.
 
     Architecture:
-      - prompt_head (CHIM's <roleplay_instructions>) → --system-prompt flag
-      - claude_md_content (rest of system message) → CLAUDE.md in temp dir
+      - prompt_head + claude_md_content → MITM proxy rewrites system blocks
+        (replaces Claude Code's blocks 1+ with our content, keeps billing block 0)
       - conversation → piped to stdin
-      - MITM proxy captures the full API body and logs it to requests.log
+      - MITM proxy captures the rewritten API body and logs it to requests.log
     """
     prompt = _format_prompt(conversation)
-    cmd = _build_cmd(model, effort, system_prompt=prompt_head)
+    cmd = _build_cmd(model, effort)
 
     request_id = uuid.uuid4().hex[:8]
     head_len = len(prompt_head)
@@ -766,19 +811,26 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
     start = time.time()
 
     # Per-request MITM proxy: intercepts Claude Code → Anthropic API call
+    # and rewrites system blocks to strip Claude Code overhead
     mitm = http.server.HTTPServer(("127.0.0.1", 0), _CaptureHandler)
     mitm.captured_body = b""
+    # System block replacement: MITM strips Claude Code's agent/coding prompts
+    # and injects our content with ephemeral caching
+    replacement = []
+    if prompt_head:
+        replacement.append(prompt_head)
+    if claude_md_content:
+        replacement.append(claude_md_content)
+    mitm.system_replacement = replacement if replacement else None
     mitm_port = mitm.server_address[1]
     mitm_thread = threading.Thread(target=mitm.serve_forever, daemon=True)
     mitm_thread.start()
 
-    # Per-request isolation: each NPC gets its own temp dir + CLAUDE.md
+    # Per-request isolation: temp dir as cwd (no CLAUDE.md — content goes
+    # directly into system blocks via MITM rewrite, avoiding the
+    # <system-reminder> wrapper overhead Claude Code adds for CLAUDE.md)
     req_dir = tempfile.mkdtemp(prefix=f"claude-req-{request_id}-")
     try:
-        if claude_md_content:
-            claude_md = Path(req_dir) / "CLAUDE.md"
-            claude_md.write_text(claude_md_content, encoding="utf-8")
-
         # Per-request env: MITM proxy + optional thinking tokens
         env = _ENV.copy()
         env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{mitm_port}"
@@ -1200,16 +1252,14 @@ async def dashboard():
         <td class="value" style="color:#4ade80">skill descriptions removed</td></tr>
       <tr><td class="label">--max-turns 1</td>
         <td class="value" style="color:#4ade80">single response, no tool loops</td></tr>
-      <tr><td class="label">--system-prompt</td>
-        <td class="value" style="color:#4ade80">PROMPT_HEAD / &lt;roleplay_instructions&gt; (API system blocks)</td></tr>
-      <tr><td class="label">CLAUDE.md per request</td>
-        <td class="value" style="color:#4ade80">character + knowledge + instructions &rarr; &lt;system-reminder&gt;</td></tr>
+      <tr><td class="label">MITM system rewrite</td>
+        <td class="value" style="color:#4ade80">strips Claude Code blocks, injects PROMPT_HEAD + bio (cached)</td></tr>
       <tr><td class="label">stdin</td>
-        <td class="value" style="color:#4ade80">conversation messages only (dialogue)</td></tr>
+        <td class="value" style="color:#4ade80">conversation messages only (dialogue, not cached)</td></tr>
       <tr><td class="label">--effort</td>
         <td class="value" style="color:{'#4ade80' if THINKING_ENABLED else '#9ca3af'}">{THINKING_EFFORT if THINKING_ENABLED else 'disabled (per-request override still works)'}</td></tr>
       <tr><td class="label">irreducible overhead</td>
-        <td class="value" style="color:#facc15">~105 tokens (billing + agent identity + directive)</td></tr>
+        <td class="value" style="color:#facc15">~25 tokens (billing header only)</td></tr>
     </table>
   </div>
 
@@ -1268,7 +1318,7 @@ async function testChat() {{
 
 
 if __name__ == "__main__":
-    print("\n  CHIM Proxy v0.9.7 — Startup Configuration\n")
+    print("\n  CHIM Proxy v0.9.8 — Startup Configuration\n")
     print("  Content format for system prompt and conversation:")
     print("    [1] Array  — preserve CHIM block structure (JSON arrays in CLAUDE.md and stdin)")
     print("    [2] Flat   — flatten to plain text (original behavior)")
