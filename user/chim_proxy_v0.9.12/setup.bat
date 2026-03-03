@@ -134,11 +134,8 @@ echo.
 
 :: 6. Windows Firewall rule (allow inbound on port 38700)
 echo [6/8] Adding Windows Firewall rule for port 38700...
-netsh advfirewall firewall show rule name="CHIM Proxy" >nul 2>&1
-if %errorlevel% equ 0 (
-    echo       Rule already exists, skipping.
-    goto :firewall_done
-)
+::    Always delete+recreate — previous installs may have a rule for a different port
+netsh advfirewall firewall delete rule name="CHIM Proxy" >nul 2>&1
 netsh advfirewall firewall add rule name="CHIM Proxy" dir=in action=allow protocol=TCP localport=38700 >nul 2>&1
 if %errorlevel% equ 0 (
     echo       Done!
@@ -150,14 +147,21 @@ if %errorlevel% equ 0 (
 :firewall_done
 echo.
 
-:: 7. Clean up stale port proxy rules from previous installs
-::    (No longer needed — the proxy binds 0.0.0.0 directly, so WSL can reach it
-::    without port forwarding.  Old rules conflict with the proxy's port binding.)
-echo [7/8] Cleaning up stale port proxy rules...
+:: 7. Port forwarding so WSL/Docker can reach the proxy on Windows
+echo [7/8] Setting up port forwarding (WSL to Windows)...
+::    Clean up stale rules from previous installs
 netsh interface portproxy delete v4tov4 listenport=8000 listenaddress=0.0.0.0 >nul 2>&1
 netsh interface portproxy delete v4tov4 listenport=38700 listenaddress=0.0.0.0 >nul 2>&1
 netsh interface portproxy delete v4tov4 listenport=38742 listenaddress=0.0.0.0 >nul 2>&1
-echo       Done!
+::    Add rule for current port
+netsh interface portproxy add v4tov4 ^
+    listenport=38700 listenaddress=0.0.0.0 ^
+    connectport=38700 connectaddress=127.0.0.1
+if %errorlevel% equ 0 (
+    echo       Done!
+) else (
+    echo [WARN] Failed to add port proxy rule.
+)
 echo.
 
 :: 8. Claude Code login (last — opens interactive TUI that blocks the script)
