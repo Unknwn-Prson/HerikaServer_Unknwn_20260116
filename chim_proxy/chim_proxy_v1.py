@@ -1,5 +1,5 @@
 """
-OpenAI-compatible proxy using Claude Code CLI legitimately.  v0.9.9
+OpenAI-compatible proxy using Claude Code CLI legitimately.  v0.13.0
 
 Architecture:
   Per-request: spawns `claude -p` subprocess routed through a local MITM
@@ -11,6 +11,7 @@ Architecture:
       2. Injects CHIM content directly into API system blocks with
          cache_control: {'type': 'ephemeral'} for prompt caching
       3. Strips <system-reminder> context injections from user messages
+      4. Applies dialogue caching based on HerikaServer temp files
     This bypasses CLAUDE.md entirely — no <system-reminder> wrapper overhead.
 
 Context minimization (applied per request):
@@ -41,7 +42,7 @@ NPC name handling:
 Usage:
   pip install fastapi uvicorn pydantic
   python chim_proxy_v1.py
-  # Then point any OpenAI-compatible client at http://127.0.0.1:8000/v1/chat/completions
+  # Then point any OpenAI-compatible client at http://127.0.0.1:38700/v1/chat/completions
 """
 import asyncio
 import http.client
@@ -73,6 +74,27 @@ logger = logging.getLogger("proxy")
 
 DEFAULT_MODEL = "claude-opus-4-5-20251101"
 
+# ---------------------------------------------------------------------------
+# Dialogue Caching Configuration
+# ---------------------------------------------------------------------------
+# Path to HerikaServer temp directory (where dialogue cache files are stored)
+# Default assumes WSL path; can be overridden via environment variable
+DIALOGUE_CACHE_PATH = os.environ.get(
+    "CHIM_DIALOGUE_CACHE_PATH",
+    r"\\wsl.localhost\DwemerAI4Skyrim3\var\www\html\HerikaServer\temp"
+)
+
+# Number of recent dialogue messages to leave uncached (for freshness)
+# This should match dialogue_cache_uncached_count in HerikaServer connector config
+DIALOGUE_CACHE_UNCACHED_COUNT = int(os.environ.get("CHIM_DIALOGUE_UNCACHED_COUNT", "5"))
+
+# NPC cache state file (stores reroll counters and last access times)
+_SCRIPT_DIR_EARLY = Path(__file__).resolve().parent
+NPC_CACHE_STATE_FILE = _SCRIPT_DIR_EARLY / "logs" / "npc_cache_state.json"
+
+# Cache state expiry (1 hour of no requests = state cleared)
+CACHE_STATE_EXPIRY_SECONDS = 3600
+
 # Known provider prefixes to strip from model names (e.g. "anthropic/claude-sonnet-4-6" → "claude-sonnet-4-6")
 _PROVIDER_PREFIXES = ("anthropic/", "openrouter/", "openai/")
 
@@ -85,6 +107,63 @@ def _normalize_model(model: str) -> str:
     return model
 
 MAX_CONCURRENT = 4
+
+# ---------------------------------------------------------------------------
+# Request History (in-memory, doesn't persist)
+# ---------------------------------------------------------------------------
+from collections import deque
+from dataclasses import dataclass, asdict
+from typing import Optional
+import threading
+
+@dataclass
+class RequestHistoryEntry:
+    """Single request entry for the dashboard history."""
+    request_id: str
+    timestamp: str
+    npc_name: Optional[str]
+    model: str
+    input_chars: int
+    output_chars: int
+    elapsed_seconds: float
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    input_tokens: int = 0
+    cache_hit_pct: float = 0.0
+
+# Thread-safe request history storage
+_request_history: deque = deque(maxlen=50)  # Keep last 50 requests
+_history_lock = threading.Lock()
+
+
+def _record_request_history(request_id: str, npc_name: Optional[str], model: str,
+                            input_chars: int, output_chars: int, elapsed: float,
+                            cache_stats: Optional[dict] = None):
+    """Record a completed request to the history deque."""
+    cache_read = cache_stats.get("cache_read", 0) if cache_stats else 0
+    cache_write = cache_stats.get("cache_creation", 0) if cache_stats else 0
+    input_tokens = cache_stats.get("input_tokens", 0) if cache_stats else 0
+    
+    # Calculate cache hit percentage
+    total = input_tokens + cache_read + cache_write
+    cache_hit_pct = (cache_read / total * 100) if total > 0 else 0.0
+    
+    entry = RequestHistoryEntry(
+        request_id=request_id,
+        timestamp=time.strftime("%H:%M:%S"),
+        npc_name=npc_name,
+        model=model.split("-")[1] if "-" in model else model,  # Shorten model name
+        input_chars=input_chars,
+        output_chars=output_chars,
+        elapsed_seconds=round(elapsed, 1),
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
+        input_tokens=input_tokens,
+        cache_hit_pct=round(cache_hit_pct, 1)
+    )
+    
+    with _history_lock:
+        _request_history.append(entry)
 
 # Extended thinking / reasoning settings (configurable at startup)
 # Maps to Claude CLI --effort flag (low / medium / high)
@@ -113,6 +192,10 @@ _ENV.pop("CLAUDECODE", None)  # Allow spawning claude from within a Claude Code 
 # Content format: "array" (CHIM-style JSON block arrays) or "flat" (plain text)
 # Set interactively at startup via __main__
 CONTENT_FORMAT = "flat"
+
+# Streaming mode: "real" (token-by-token via --output-format stream-json) or "fake" (collect then chunk)
+# Set interactively at startup via __main__
+STREAMING_MODE = "fake"
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +237,7 @@ def _detect_npc_name(system_contents: list) -> Optional[str]:
 
     Looks for common CHIM patterns like 'You are Brelyna Maryon' or
     'Name: Brelyna Maryon' across all system blocks.
+    Handles markdown formatting like **bold** around names.
     """
     all_text = ""
     for content in system_contents:
@@ -166,11 +250,15 @@ def _detect_npc_name(system_contents: list) -> Optional[str]:
                 elif isinstance(block, str):
                     all_text += block + "\n"
 
+    # Strip markdown bold markers for matching
+    clean_text = all_text.replace("**", "")
+    
     for pattern in [
         r'(?:You are|Your name is|you are|your name is)\s+([A-Z][a-zA-Z\'-]+(?:\s+[A-Z][a-zA-Z\'-]+)*)',
         r'(?:Name|CHARACTER)\s*:\s*([A-Z][a-zA-Z\'-]+(?:\s+[A-Z][a-zA-Z\'-]+)*)',
+        r'(?:Roleplay as|roleplay as)\s+([A-Z][a-zA-Z\'-]+(?:\s+[A-Z][a-zA-Z\'-]+)*)',
     ]:
-        match = re.search(pattern, all_text)
+        match = re.search(pattern, clean_text)
         if match:
             name = match.group(1).strip()
             logger.info(f"Detected NPC name: {name}")
@@ -316,6 +404,199 @@ REQUEST_LOG = LOG_DIR / "requests.log"
 
 
 # ---------------------------------------------------------------------------
+# NPC Cache State Management (reroll counters, last access tracking)
+# ---------------------------------------------------------------------------
+
+def _load_npc_cache_state() -> dict:
+    """Load NPC cache state from file, cleaning expired entries."""
+    if not NPC_CACHE_STATE_FILE.exists():
+        return {}
+    try:
+        with open(NPC_CACHE_STATE_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
+        # Clean expired entries
+        now = time.time()
+        cleaned = {}
+        for npc, data in state.items():
+            if now - data.get("last_access", 0) < CACHE_STATE_EXPIRY_SECONDS:
+                cleaned[npc] = data
+        if len(cleaned) != len(state):
+            _save_npc_cache_state(cleaned)
+        return cleaned
+    except Exception as e:
+        logger.warning(f"Failed to load NPC cache state: {e}")
+        return {}
+
+
+def _save_npc_cache_state(state: dict) -> None:
+    """Save NPC cache state to file."""
+    try:
+        NPC_CACHE_STATE_FILE.parent.mkdir(exist_ok=True)
+        with open(NPC_CACHE_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save NPC cache state: {e}")
+
+
+def _get_npc_reroll_count(npc_name: str) -> int:
+    """Get the reroll counter for an NPC (0 = no reroll)."""
+    state = _load_npc_cache_state()
+    return state.get(npc_name, {}).get("reroll_count", 0)
+
+
+def _increment_npc_reroll(npc_name: str) -> int:
+    """Increment the reroll counter for an NPC. Returns new count."""
+    state = _load_npc_cache_state()
+    if npc_name not in state:
+        state[npc_name] = {"reroll_count": 0, "last_access": time.time()}
+    state[npc_name]["reroll_count"] = state[npc_name].get("reroll_count", 0) + 1
+    state[npc_name]["last_access"] = time.time()
+    _save_npc_cache_state(state)
+    return state[npc_name]["reroll_count"]
+
+
+def _touch_npc_cache(npc_name: str) -> None:
+    """Update last access time for an NPC."""
+    state = _load_npc_cache_state()
+    if npc_name not in state:
+        state[npc_name] = {"reroll_count": 0, "last_access": time.time()}
+    else:
+        state[npc_name]["last_access"] = time.time()
+    _save_npc_cache_state(state)
+
+
+def _clear_npc_reroll(npc_name: str) -> None:
+    """Clear the reroll counter for an NPC."""
+    state = _load_npc_cache_state()
+    if npc_name in state:
+        state[npc_name]["reroll_count"] = 0
+        state[npc_name]["last_access"] = time.time()
+        _save_npc_cache_state(state)
+
+
+def _list_cached_npcs() -> list[dict]:
+    """List all NPCs with dialogue cache files."""
+    npcs = []
+    cache_path = Path(DIALOGUE_CACHE_PATH)
+    if not cache_path.exists():
+        return npcs
+    
+    state = _load_npc_cache_state()
+    
+    # Find dialogue cache files
+    for f in cache_path.glob("combined_dialogue_cache_*.tmp"):
+        # Extract NPC name from filename: combined_dialogue_cache_simple_Brelyna Maryon.tmp
+        name_match = re.search(r"combined_dialogue_cache_\w+_(.+)\.tmp$", f.name)
+        if name_match:
+            npc_name = name_match.group(1)
+            npc_state = state.get(npc_name, {})
+            try:
+                stat = f.stat()
+                npcs.append({
+                    "name": npc_name,
+                    "dialogue_cache_size": stat.st_size,
+                    "last_modified": stat.st_mtime,
+                    "reroll_count": npc_state.get("reroll_count", 0),
+                    "last_access": npc_state.get("last_access", 0),
+                })
+            except Exception:
+                pass
+    
+    return sorted(npcs, key=lambda x: x.get("last_access", 0), reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# Dialogue Cache Reading
+# ---------------------------------------------------------------------------
+
+def _load_dialogue_cache(npc_name: str) -> Optional[list[dict]]:
+    """Load dialogue cache for an NPC from temp file.
+    
+    Returns list of {type: "text", text: "..."} blocks, or None if not found.
+    """
+    cache_path = Path(DIALOGUE_CACHE_PATH)
+    
+    if not cache_path.exists():
+        logger.warning(f"Dialogue cache path does not exist: {DIALOGUE_CACHE_PATH}")
+        return None
+    
+    # Try both simple and json format filenames
+    for fmt in ["simple", "json"]:
+        cache_file = cache_path / f"combined_dialogue_cache_{fmt}_{npc_name}.tmp"
+        logger.info(f"Looking for dialogue cache: {cache_file}")
+        if cache_file.exists():
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    blocks = json.loads(content)
+                    if isinstance(blocks, list):
+                        logger.info(f"Loaded dialogue cache for {npc_name}: {len(blocks)} blocks from {fmt} format")
+                        return blocks
+            except Exception as e:
+                logger.warning(f"Failed to load dialogue cache for {npc_name}: {e}")
+    
+    logger.info(f"No dialogue cache file found for {npc_name}")
+    return None
+
+
+def _get_last_cached_message_text(dialogue_cache: list[dict]) -> Optional[str]:
+    """Get the text of the last message that SHOULD be cached.
+    
+    The cutoff is calculated as: len(blocks) - DIALOGUE_CACHE_UNCACHED_COUNT - 1
+    Everything up to and including this index should have cache_control.
+    """
+    if not dialogue_cache:
+        return None
+    
+    # Calculate cutoff index (last message to cache)
+    # If uncached_count is 5 and we have 10 messages, cutoff is at index 4 (5th message)
+    # Messages 0-4 get cached, messages 5-9 stay uncached
+    cutoff_index = len(dialogue_cache) - DIALOGUE_CACHE_UNCACHED_COUNT - 1
+    
+    if cutoff_index < 0:
+        # Not enough messages to have any cached - everything is uncached
+        logger.info(f"Dialogue cache too small ({len(dialogue_cache)} blocks) "
+                   f"for uncached count ({DIALOGUE_CACHE_UNCACHED_COUNT})")
+        return None
+    
+    # Get the text at the cutoff index
+    block = dialogue_cache[cutoff_index]
+    if isinstance(block, dict) and block.get("type") == "text":
+        text = block.get("text", "").strip()
+        if text:
+            logger.info(f"Cache cutoff at index {cutoff_index}/{len(dialogue_cache)-1}: "
+                       f"{text[:60]}...")
+            return text
+    
+    return None
+
+
+def _find_cache_cutoff_index(messages: list[dict], last_cached_text: str) -> int:
+    """Find the index in messages content where the last cached text appears.
+    
+    Returns the index of the block containing last_cached_text, or -1 if not found.
+    Messages are expected to be in Anthropic format with content arrays.
+    """
+    if not last_cached_text:
+        return -1
+    
+    # Normalize the text for matching (strip whitespace, normalize newlines)
+    normalized_cached = last_cached_text.strip().replace("\r\n", "\n")
+    
+    for msg in messages:
+        content = msg.get("content", [])
+        if isinstance(content, list):
+            for i, block in enumerate(content):
+                if isinstance(block, dict) and block.get("type") == "text":
+                    block_text = block.get("text", "").strip().replace("\r\n", "\n")
+                    if block_text == normalized_cached:
+                        logger.info(f"Found cache cutoff at block index {i}")
+                        return i
+    
+    return -1
+
+
+# ---------------------------------------------------------------------------
 # Local intercepting proxy — captures the real API request body
 # ---------------------------------------------------------------------------
 
@@ -396,8 +677,8 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
                     msg["content"] = new_blocks
 
     def _rewrite_system_blocks(self, body: bytes) -> bytes:
-        """Replace Claude Code's system blocks with our own content and
-        strip <system-reminder> tags from user messages.
+        """Replace Claude Code's system blocks with our own content,
+        strip <system-reminder> tags from user messages, and add dialogue caching.
 
         System block rewrite:
           Block 0: billing metadata (no cache_control) — KEEP
@@ -406,8 +687,19 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
 
         User message cleanup:
           <system-reminder>...</system-reminder> context injections — STRIP
+
+        Dialogue caching (if npc_name is set):
+          - Loads dialogue cache from temp file
+          - Finds last cached message in the messages
+          - Adds cache_control to all content blocks up to that point
+          
+        Reroll support:
+          - If reroll counter > 0, adds trailing whitespace to last system block
+            to invalidate cache (invisible to Claude, changes hash)
         """
         replacement = getattr(self.server, "system_replacement", None)
+        npc_name = getattr(self.server, "npc_name", None)
+        
         if not replacement:
             return body
         try:
@@ -419,18 +711,35 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
             if old_system and isinstance(old_system[0], dict) and not old_system[0].get("cache_control"):
                 new_system.append(old_system[0])
 
+            # Get reroll count for this NPC
+            reroll_count = 0
+            if npc_name:
+                reroll_count = _get_npc_reroll_count(npc_name)
+                _touch_npc_cache(npc_name)
+
             # Inject our content blocks with ephemeral caching
-            for text in replacement:
-                new_system.append({
+            for i, text in enumerate(replacement):
+                block = {
                     "type": "text",
                     "text": text,
                     "cache_control": {"type": "ephemeral"},
-                })
+                }
+                # Apply reroll suffix to the LAST system block if reroll is active
+                if reroll_count > 0 and i == len(replacement) - 1:
+                    # Unique invisible suffix per reroll count — never repeats
+                    suffix = f" <!-- reroll {reroll_count} -->"
+                    block["text"] = text + suffix
+                    logger.info(f"[MITM] Applied reroll suffix (count={reroll_count}) for {npc_name}")
+                new_system.append(block)
 
             api_body["system"] = new_system
 
             # Strip <system-reminder> injections from user messages
             self._strip_system_reminders(api_body)
+
+            # Apply dialogue caching if NPC name is available
+            if npc_name:
+                self._apply_dialogue_caching(api_body, npc_name)
 
             rewritten = json.dumps(api_body, ensure_ascii=False).encode("utf-8")
 
@@ -440,6 +749,137 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
         except Exception as e:
             logger.warning(f"[MITM] system block rewrite failed: {e}")
             return body  # Fall through with original on any error
+
+    def _apply_dialogue_caching(self, api_body: dict, npc_name: str) -> bool:
+        """Add cache_control markers to dialogue messages based on temp file cache.
+        
+        The dialogue cache temp file contains individual message blocks, but Claude Code
+        often sends them as one large text block. We need to:
+        1. Find the cutoff text from the temp file
+        2. Locate it within the request content (either as exact block match or substring)
+        3. If it's a single large block, split it at the cutoff point and add cache marker
+        
+        Returns True if caching was applied, False otherwise.
+        """
+        dialogue_cache = _load_dialogue_cache(npc_name)
+        if not dialogue_cache:
+            logger.info(f"[MITM] No dialogue cache found for {npc_name}")
+            return False
+        
+        last_cached_text = _get_last_cached_message_text(dialogue_cache)
+        if not last_cached_text:
+            logger.info(f"[MITM] Dialogue cache for {npc_name} is empty or cutoff invalid")
+            return False
+        
+        # Normalize the cached text for matching
+        normalized_cached = last_cached_text.strip().replace("\r\n", "\n").replace("\r", "\n")
+        logger.info(f"[MITM] Looking for cutoff text ({len(normalized_cached)} chars): {normalized_cached[:80]}...")
+        
+        messages = api_body.get("messages", [])
+        
+        for msg_idx, msg in enumerate(messages):
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content", [])
+            
+            # Handle string content (convert to list format)
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content}]
+                msg["content"] = content
+                api_body["messages"][msg_idx]["content"] = content  # Explicit update
+            
+            if not isinstance(content, list):
+                continue
+            
+            logger.info(f"[MITM] Searching through {len(content)} content blocks")
+            
+            # Strategy 1: Try exact block match first
+            cutoff_index = -1
+            for i, block in enumerate(content):
+                if isinstance(block, dict) and block.get("type") == "text":
+                    block_text = block.get("text", "").strip().replace("\r\n", "\n").replace("\r", "\n")
+                    if block_text == normalized_cached:
+                        cutoff_index = i
+                        logger.info(f"[MITM] Found exact block match at index {i}")
+                        break
+            
+            if cutoff_index >= 0:
+                # Apply cache_control to blocks up to and including cutoff
+                for i in range(cutoff_index + 1):
+                    if isinstance(content[i], dict) and "cache_control" not in content[i]:
+                        content[i]["cache_control"] = {"type": "ephemeral"}
+                cached_count = cutoff_index + 1
+                uncached_count = len(content) - cached_count
+                logger.info(f"[MITM] Dialogue caching (exact match) for {npc_name}: "
+                           f"{cached_count} blocks cached, {uncached_count} uncached")
+                return True
+            
+            # Strategy 2: Substring search within blocks (for single large block case)
+            for i, block in enumerate(content):
+                if not isinstance(block, dict) or block.get("type") != "text":
+                    continue
+                block_text = block.get("text", "")
+                normalized_block = block_text.replace("\r\n", "\n").replace("\r", "\n")
+                
+                # Find where the cutoff text ends within this block
+                cutoff_pos = normalized_block.find(normalized_cached)
+                if cutoff_pos >= 0:
+                    # Found it! Split the block at the end of the cached portion
+                    split_point = cutoff_pos + len(normalized_cached)
+                    
+                    cached_part = block_text[:split_point]
+                    uncached_part = block_text[split_point:].lstrip("\n")  # Remove leading newlines from uncached
+                    
+                    logger.info(f"[MITM] Found cutoff via substring at position {cutoff_pos}, "
+                               f"splitting block (cached: {len(cached_part)} chars, uncached: {len(uncached_part)} chars)")
+                    
+                    if uncached_part:
+                        # Replace single block with two blocks: cached + uncached
+                        new_blocks = content[:i]  # Keep any blocks before this one
+                        new_blocks.append({
+                            "type": "text",
+                            "text": cached_part,
+                            "cache_control": {"type": "ephemeral"}
+                        })
+                        new_blocks.append({
+                            "type": "text",
+                            "text": uncached_part
+                        })
+                        new_blocks.extend(content[i+1:])  # Keep any blocks after this one
+                        
+                        # CRITICAL: Update both msg and api_body directly
+                        msg["content"] = new_blocks
+                        api_body["messages"][msg_idx]["content"] = new_blocks
+                        
+                        logger.info(f"[MITM] Dialogue caching (split) for {npc_name}: "
+                                   f"content now has {len(new_blocks)} blocks")
+                        
+                        # Verify the update
+                        verify = api_body["messages"][msg_idx]["content"]
+                        has_cache = any(b.get("cache_control") for b in verify if isinstance(b, dict))
+                        logger.info(f"[MITM] Verification: {len(verify)} blocks, has_cache_control={has_cache}")
+                    else:
+                        # Cutoff is at the very end - just add cache_control
+                        block["cache_control"] = {"type": "ephemeral"}
+                        logger.info(f"[MITM] Dialogue caching (end match) for {npc_name}: "
+                                   f"entire block cached")
+                    
+                    return True
+        
+        # Debug: show what we have
+        for msg in messages:
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content", [])
+            if isinstance(content, list) and len(content) > 0:
+                block = content[0]
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text", "")[:200]
+                    logger.info(f"[MITM] First block preview: {text}...")
+            break
+        logger.warning(f"[MITM] Could not find cache cutoff for {npc_name} - "
+                      f"cutoff text not found in any message content")
+        return False
 
     def _forward(self, method: str):
         req_id = getattr(self.server, "_mitm_id", "?")
@@ -503,11 +943,13 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
             # read1() returns data from the buffer or a single recv() call,
             # so it yields data as soon as it arrives — no multi-second stalls.
             total_bytes = 0
+            response_buffer = b""  # Accumulate for cache telemetry extraction
             while True:
                 chunk = resp.read1(16384)
                 if not chunk:
                     break
                 total_bytes += len(chunk)
+                response_buffer += chunk  # Keep for telemetry parsing
                 # HTTP chunked encoding: hex-size CRLF data CRLF
                 self.wfile.write(f"{len(chunk):x}\r\n".encode())
                 self.wfile.write(chunk)
@@ -518,6 +960,10 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(b"0\r\n\r\n")
             self.wfile.flush()
             conn.close()
+            
+            # Extract cache telemetry from SSE response
+            self._log_cache_telemetry(req_id, response_buffer)
+            
             logger.info(f"[MITM-{req_id}] forwarded {total_bytes} bytes response")
         except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
             logger.info(f"[MITM-{req_id}] client disconnected (normal)")
@@ -537,6 +983,85 @@ class _CaptureHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         self._forward("GET")
+
+    def _log_cache_telemetry(self, req_id: str, response_buffer: bytes) -> None:
+        """Extract and log cache telemetry from Anthropic SSE response.
+        
+        Anthropic includes usage stats in the message_delta event:
+        - input_tokens: total input tokens
+        - cache_creation_input_tokens: tokens written to cache (cache MISS)
+        - cache_read_input_tokens: tokens read from cache (cache HIT)
+        """
+        try:
+            # Check if response is gzip compressed (magic bytes: 1f 8b)
+            if response_buffer[:2] == b'\x1f\x8b':
+                import gzip
+                try:
+                    response_buffer = gzip.decompress(response_buffer)
+                    logger.debug(f"[MITM-{req_id}] Decompressed gzip response")
+                except Exception as e:
+                    logger.warning(f"[MITM-{req_id}] Failed to decompress gzip: {e}")
+                    return
+            
+            text = response_buffer.decode("utf-8", errors="replace")
+            
+            # Find all data: lines - handle both "data: " and "data:" formats
+            found_usage = False
+            lines_checked = 0
+            for line in text.split("\n"):
+                line = line.strip()
+                # Try both formats: "data: {...}" and "data:{...}"
+                json_str = None
+                if line.startswith("data: "):
+                    json_str = line[6:]
+                elif line.startswith("data:"):
+                    json_str = line[5:]
+                else:
+                    continue
+                    
+                lines_checked += 1
+                try:
+                    data = json.loads(json_str)
+                    usage = data.get("usage", {})
+                    if not usage:
+                        continue
+                    
+                    found_usage = True
+                    input_tokens = usage.get("input_tokens", 0)
+                    output_tokens = usage.get("output_tokens", 0)
+                    cache_creation = usage.get("cache_creation_input_tokens", 0)
+                    cache_read = usage.get("cache_read_input_tokens", 0)
+                    
+                    # Calculate cache efficiency
+                    total_input = input_tokens + cache_read + cache_creation
+                    if total_input > 0:
+                        cache_hit_pct = (cache_read / total_input * 100) if cache_read else 0
+                        cache_miss_pct = (cache_creation / total_input * 100) if cache_creation else 0
+                    else:
+                        cache_hit_pct = cache_miss_pct = 0
+                    
+                    if cache_read > 0:
+                        logger.info(f"[MITM-{req_id}] CACHE HIT: {cache_read:,} tokens ({cache_hit_pct:.1f}%)")
+                    if cache_creation > 0:
+                        logger.info(f"[MITM-{req_id}] CACHE WRITE: {cache_creation:,} tokens ({cache_miss_pct:.1f}%)")
+                    if not cache_read and not cache_creation and input_tokens:
+                        logger.info(f"[MITM-{req_id}] NO CACHE: {input_tokens:,} input tokens")
+                    
+                    # Store on server for logging
+                    self.server.cache_stats = {
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cache_creation": cache_creation,
+                        "cache_read": cache_read,
+                    }
+                    return
+                except json.JSONDecodeError:
+                    continue
+            
+            if lines_checked == 0:
+                logger.debug(f"[MITM-{req_id}] No SSE data lines found in response")
+        except Exception as e:
+            logger.warning(f"[MITM-{req_id}] cache telemetry parse error: {e}")
 
 
 def _format_api_body(api_body: dict) -> str:
@@ -815,11 +1340,32 @@ def _log_request(request_id: str, model: str, elapsed: float,
             if isinstance(content, str):
                 entry += f"\n[{role}]\n{content}\n"
             elif isinstance(content, list):
-                parts = []
-                for block in content:
+                entry += f"\n[{role}] ({len(content)} content blocks)\n"
+                for j, block in enumerate(content):
                     if isinstance(block, dict):
-                        parts.append(block.get("text", ""))
-                entry += f"\n[{role}]\n{''.join(parts)}\n"
+                        btype = block.get("type", "?")
+                        text = block.get("text", "")
+                        cache = block.get("cache_control")
+                        cache_str = " CACHED" if cache else ""
+                        
+                        # Show a clean preview of the text content
+                        # Skip JSON structure prefix if present, show actual dialogue
+                        preview_text = text
+                        if preview_text.startswith('[') or preview_text.startswith('{'):
+                            # Try to extract first actual text from JSON if it looks like nested structure
+                            try:
+                                import re
+                                # Find first "text": "..." value
+                                match = re.search(r'"text":\s*"([^"]{0,150})', preview_text)
+                                if match:
+                                    preview_text = match.group(1) + "..."
+                            except:
+                                pass
+                        
+                        preview = preview_text[:150].replace('\n', ' ').replace('\r', '') + ("..." if len(text) > 150 else "")
+                        entry += f"  [Block {j}{cache_str}] {len(text):,} chars: {preview}\n"
+                    else:
+                        entry += f"  [Block {j}] {block}\n"
     else:
         entry += "\n(MITM capture failed — API body not available)\n"
 
@@ -835,18 +1381,26 @@ def _log_request(request_id: str, model: str, elapsed: float,
         logger.warning(f"[{request_id}] Failed to write request log: {e}")
 
 
-def _build_cmd(model: str, effort: str = "", system_prompt: str = "") -> list[str]:
+def _build_cmd(model: str, effort: str = "", system_prompt: str = "",
+               streaming: bool = False) -> list[str]:
     """Build claude CLI command with all context-minimization flags.
 
     system_prompt: PROMPT_HEAD extracted from CHIM's <roleplay_instructions> block.
                    Passed via --system-prompt (controls the API system block).
+    streaming:     If True, use stream-json output with partial messages for
+                   real-time token delivery.
     """
+    if streaming:
+        output_flags = ["--output-format", "stream-json", "--include-partial-messages"]
+    else:
+        output_flags = ["--output-format", "json"]
+
     cmd = [
         CLAUDE_PATH, "-p",
         "--tools=",                          # No tools → no tool descriptions in context
         "--disable-slash-commands",          # No skill descriptions in context
         "--model", model,
-        "--output-format", "json",           # Single JSON result — reliable on all platforms
+        *output_flags,
         "--max-turns", "1",                  # Single response, no tool loops
         "--no-session-persistence",          # Don't save session to disk
     ]
@@ -859,7 +1413,9 @@ def _build_cmd(model: str, effort: str = "", system_prompt: str = "") -> list[st
 
 async def call_claude(prompt_head: str, claude_md_content: Optional[str],
                       conversation: list[dict],
-                      model: str, effort: str = "", thinking_tokens: int = 0) -> str:
+                      model: str, effort: str = "", thinking_tokens: int = 0,
+                      npc_name: Optional[str] = None,
+                      request_id: Optional[str] = None) -> str:
     """
     Spawn claude -p in a per-request temp dir.
 
@@ -873,11 +1429,13 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
         (replaces Claude Code's blocks 1+ with our content, keeps billing block 0)
       - conversation → piped to stdin
       - MITM proxy captures the rewritten API body and logs it to requests.log
+      - Dialogue caching: if npc_name is provided, dialogue cache is loaded
+        from temp files and cache_control markers are added to messages
     """
     prompt = _format_prompt(conversation)
     cmd = _build_cmd(model, effort)
 
-    request_id = uuid.uuid4().hex[:8]
+    request_id = request_id or uuid.uuid4().hex[:8]
     head_len = len(prompt_head)
     md_len = len(claude_md_content) if claude_md_content else 0
     extras = []
@@ -885,6 +1443,8 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
         extras.append(f"effort={effort}")
     if thinking_tokens:
         extras.append(f"thinking_tokens={thinking_tokens}")
+    if npc_name:
+        extras.append(f"npc={npc_name}")
     extras_str = f", {', '.join(extras)}" if extras else ""
     logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, "
                 f"{head_len} chars prompt_head, {md_len} chars claude.md, "
@@ -895,6 +1455,7 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
     # and rewrites system blocks to strip Claude Code overhead
     mitm = http.server.HTTPServer(("127.0.0.1", 0), _CaptureHandler)
     mitm.captured_body = b""
+    mitm.cache_stats = {}  # For cache telemetry
     # System block replacement: MITM strips Claude Code's agent/coding prompts
     # and injects our content with ephemeral caching
     replacement = []
@@ -903,6 +1464,9 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
     if claude_md_content:
         replacement.append(claude_md_content)
     mitm.system_replacement = replacement if replacement else None
+    mitm.npc_name = npc_name  # For dialogue caching
+    if npc_name:
+        logger.info(f"[{request_id}] NPC name for dialogue caching: {npc_name}")
     mitm._mitm_id = request_id  # Used for diagnostic logging in _CaptureHandler
     mitm_port = mitm.server_address[1]
     mitm_thread = threading.Thread(target=mitm.serve_forever, daemon=True)
@@ -986,13 +1550,26 @@ async def call_claude(prompt_head: str, claude_md_content: Optional[str],
     # --- Log the FULL API request body (every token sent to the model) ---
     _log_request(request_id, model, elapsed, captured_api_body, text)
 
+    # --- Record to request history for dashboard ---
+    input_chars = len(claude_md_content or "") + sum(len(json.dumps(m)) for m in conversation)
+    _record_request_history(
+        request_id=request_id,
+        npc_name=npc_name,
+        model=model,
+        input_chars=input_chars,
+        output_chars=len(text),
+        elapsed=elapsed,
+        cache_stats=getattr(mitm, 'cache_stats', None)
+    )
+
     return text
 
 
-async def call_claude_streaming(prompt_head: str, claude_md_content: Optional[str],
-                                conversation: list[dict],
-                                model: str, effort: str = "", thinking_tokens: int = 0):
-    """Streaming wrapper: get full response then emit as OpenAI SSE chunks."""
+async def _call_claude_fake_streaming(prompt_head: str, claude_md_content: Optional[str],
+                                      conversation: list[dict],
+                                      model: str, effort: str = "", thinking_tokens: int = 0,
+                                      npc_name: Optional[str] = None):
+    """Fake streaming: get full response via call_claude, then chunk it as SSE."""
     request_id = uuid.uuid4().hex[:8]
     cmpl_id = f"chatcmpl-{uuid.uuid4().hex[:16]}"
     created = int(time.time())
@@ -1002,12 +1579,14 @@ async def call_claude_streaming(prompt_head: str, claude_md_content: Optional[st
         extras.append(f"effort={effort}")
     if thinking_tokens:
         extras.append(f"thinking_tokens={thinking_tokens}")
-    logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, stream"
+    if npc_name:
+        extras.append(f"npc={npc_name}")
+    logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, fake-stream"
                 f"{', ' + ', '.join(extras) if extras else ''})")
     start = time.time()
 
     # Get complete response (reliable across platforms)
-    response = await call_claude(prompt_head, claude_md_content, conversation, model, effort, thinking_tokens)
+    response = await call_claude(prompt_head, claude_md_content, conversation, model, effort, thinking_tokens, npc_name, request_id=request_id)
 
     # Role chunk
     role_chunk = {
@@ -1039,7 +1618,192 @@ async def call_claude_streaming(prompt_head: str, claude_md_content: Optional[st
     yield "data: [DONE]\n\n"
 
     elapsed = time.time() - start
-    logger.info(f"[{request_id}] <- {len(response)} chars ({elapsed:.1f}s, streamed)")
+    logger.info(f"[{request_id}] fake-stream complete ({elapsed:.1f}s, {len(response)} chars)")
+
+
+async def _call_claude_real_streaming(prompt_head: str, claude_md_content: Optional[str],
+                                      conversation: list[dict],
+                                      model: str, effort: str = "", thinking_tokens: int = 0,
+                                      npc_name: Optional[str] = None):
+    """Real streaming: spawn claude with --output-format stream-json and yield
+    OpenAI SSE chunks as tokens arrive from the CLI's stdout.
+
+    Stream-json format (one JSON object per line):
+      type="stream_event", event.type="content_block_delta",
+        event.delta.type="text_delta", event.delta.text="..." → text tokens
+      type="result", result="..." → final complete text (used for logging)
+    """
+    request_id = uuid.uuid4().hex[:8]
+    cmpl_id = f"chatcmpl-{uuid.uuid4().hex[:16]}"
+    created = int(time.time())
+    prompt = _format_prompt(conversation)
+    cmd = _build_cmd(model, effort, streaming=True)
+
+    extras = []
+    if effort:
+        extras.append(f"effort={effort}")
+    if thinking_tokens:
+        extras.append(f"thinking_tokens={thinking_tokens}")
+    if npc_name:
+        extras.append(f"npc={npc_name}")
+    logger.info(f"[{request_id}] -> {model} ({len(conversation)} msgs, real-stream"
+                f"{', ' + ', '.join(extras) if extras else ''})")
+    start = time.time()
+
+    # Per-request MITM proxy (same as call_claude)
+    mitm = http.server.HTTPServer(("127.0.0.1", 0), _CaptureHandler)
+    mitm.captured_body = b""
+    mitm.cache_stats = {}
+    replacement = []
+    if prompt_head:
+        replacement.append(prompt_head)
+    if claude_md_content:
+        replacement.append(claude_md_content)
+    mitm.system_replacement = replacement if replacement else None
+    mitm.npc_name = npc_name
+    mitm._mitm_id = request_id
+    mitm_port = mitm.server_address[1]
+    mitm_thread = threading.Thread(target=mitm.serve_forever, daemon=True)
+    mitm_thread.start()
+
+    req_dir = tempfile.mkdtemp(prefix=f"claude-req-{request_id}-")
+    full_response = ""
+    try:
+        env = _ENV.copy()
+        env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{mitm_port}"
+        if thinking_tokens >= 1024:
+            env["MAX_THINKING_TOKENS"] = str(thinking_tokens)
+
+        async with _semaphore:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+                cwd=req_dir,
+            )
+            # Send prompt to stdin, then close to signal EOF
+            proc.stdin.write(prompt.encode("utf-8"))
+            await proc.stdin.drain()
+            proc.stdin.close()
+
+            # Emit role chunk immediately
+            role_chunk = {
+                "id": cmpl_id, "object": "chat.completion.chunk",
+                "created": created, "model": model,
+                "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
+            }
+            yield f"data: {json.dumps(role_chunk)}\n\n"
+
+            # Read stdout line-by-line, parse stream-json events
+            while True:
+                try:
+                    line = await asyncio.wait_for(proc.stdout.readline(), timeout=300)
+                except asyncio.TimeoutError:
+                    logger.warning(f"[{request_id}] stream timeout")
+                    break
+                if not line:
+                    break  # EOF
+                line_str = line.decode("utf-8", errors="replace").strip()
+                if not line_str:
+                    continue
+
+                try:
+                    event = json.loads(line_str)
+                except json.JSONDecodeError:
+                    continue
+
+                event_type = event.get("type", "")
+
+                # Real-time text deltas from stream_event
+                if event_type == "stream_event":
+                    inner = event.get("event", {})
+                    if inner.get("type") == "content_block_delta":
+                        delta = inner.get("delta", {})
+                        if delta.get("type") == "text_delta":
+                            text = delta.get("text", "")
+                            if text:
+                                chunk = {
+                                    "id": cmpl_id, "object": "chat.completion.chunk",
+                                    "created": created, "model": model,
+                                    "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}],
+                                }
+                                yield f"data: {json.dumps(chunk)}\n\n"
+                                full_response += text
+
+                # Also handle assistant messages (complete text, fallback)
+                elif event_type == "assistant":
+                    msg = event.get("message", {})
+                    for block in msg.get("content", []):
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            # Only use if we haven't been getting deltas
+                            if not full_response:
+                                full_response = block.get("text", "")
+
+                # Final result
+                elif event_type == "result":
+                    result_text = event.get("result", "")
+                    if result_text and not full_response:
+                        full_response = result_text
+
+            # Wait for process to finish
+            await proc.wait()
+
+        # Stop chunk
+        stop_chunk = {
+            "id": cmpl_id, "object": "chat.completion.chunk",
+            "created": created, "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        }
+        yield f"data: {json.dumps(stop_chunk)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    finally:
+        shutil.rmtree(req_dir, ignore_errors=True)
+        mitm.shutdown()
+        mitm_thread.join(timeout=5)
+
+    elapsed = time.time() - start
+    logger.info(f"[{request_id}] <- {len(full_response)} chars ({elapsed:.1f}s, real-stream)")
+
+    # Log request (captured API body from MITM)
+    captured_api_body = None
+    if mitm.captured_body:
+        try:
+            captured_api_body = json.loads(mitm.captured_body)
+        except json.JSONDecodeError:
+            pass
+    _log_request(request_id, model, elapsed, captured_api_body, full_response)
+
+    # Record to request history
+    input_chars = len(claude_md_content or "") + sum(len(json.dumps(m)) for m in conversation)
+    _record_request_history(
+        request_id=request_id,
+        npc_name=npc_name,
+        model=model,
+        input_chars=input_chars,
+        output_chars=len(full_response),
+        elapsed=elapsed,
+        cache_stats=getattr(mitm, 'cache_stats', None)
+    )
+
+
+async def call_claude_streaming(prompt_head: str, claude_md_content: Optional[str],
+                                conversation: list[dict],
+                                model: str, effort: str = "", thinking_tokens: int = 0,
+                                npc_name: Optional[str] = None):
+    """Dispatch to real or fake streaming based on STREAMING_MODE setting."""
+    if STREAMING_MODE == "real":
+        gen = _call_claude_real_streaming(
+            prompt_head, claude_md_content, conversation,
+            model, effort, thinking_tokens, npc_name)
+    else:
+        gen = _call_claude_fake_streaming(
+            prompt_head, claude_md_content, conversation,
+            model, effort, thinking_tokens, npc_name)
+    async for chunk in gen:
+        yield chunk
 
 
 # ---------------------------------------------------------------------------
@@ -1071,7 +1835,12 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Claude SkyrimNet Proxy", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"^https?://(127\.0\.0\.1|localhost|172\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?$",
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def _resolve_effort(reasoning: Optional[dict]) -> str:
@@ -1136,12 +1905,12 @@ async def chat_completions(req: ChatRequest):
 
     if req.stream:
         return StreamingResponse(
-            call_claude_streaming(prompt_head, claude_md, merged, model, effort, thinking_tokens),
+            call_claude_streaming(prompt_head, claude_md, merged, model, effort, thinking_tokens, npc_name),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
-    response = await call_claude(prompt_head, claude_md, merged, model, effort, thinking_tokens)
+    response = await call_claude(prompt_head, claude_md, merged, model, effort, thinking_tokens, npc_name)
     if not response:
         raise HTTPException(status_code=500, detail="Empty response from Claude")
 
@@ -1195,6 +1964,7 @@ async def health():
         "content_format": CONTENT_FORMAT,
         "thinking_enabled": THINKING_ENABLED,
         "thinking_effort": THINKING_EFFORT if THINKING_ENABLED else "off",
+        "streaming_mode": STREAMING_MODE,
         "claude_path": CLAUDE_PATH,
         "work_dir": "per-request temp dirs",
         "max_concurrent": MAX_CONCURRENT,
@@ -1246,6 +2016,91 @@ async def debug_requests(last: int = 5):
 
     import html as html_mod
     return HTMLResponse(f"<pre>{html_mod.escape(tail_text)}</pre>")
+
+
+# ---------------------------------------------------------------------------
+# NPC Cache Management API
+# ---------------------------------------------------------------------------
+
+@app.get("/api/npcs")
+async def api_list_npcs():
+    """List all NPCs with dialogue cache files and their cache state."""
+    npcs = _list_cached_npcs()
+    return {
+        "npcs": npcs,
+        "config": {
+            "dialogue_cache_path": DIALOGUE_CACHE_PATH,
+            "uncached_count": DIALOGUE_CACHE_UNCACHED_COUNT,
+            "cache_state_expiry_seconds": CACHE_STATE_EXPIRY_SECONDS,
+        }
+    }
+
+
+@app.post("/api/npcs/{npc_name}/reroll")
+async def api_reroll_npc(npc_name: str):
+    """Increment the reroll counter for an NPC, invalidating their cache."""
+    new_count = _increment_npc_reroll(npc_name)
+    logger.info(f"Reroll triggered for {npc_name}: count now {new_count}")
+    return {
+        "npc_name": npc_name,
+        "reroll_count": new_count,
+        "message": f"Cache will be invalidated on next request (reroll count: {new_count})"
+    }
+
+
+@app.post("/api/npcs/{npc_name}/clear-reroll")
+async def api_clear_reroll(npc_name: str):
+    """Clear the reroll counter for an NPC."""
+    _clear_npc_reroll(npc_name)
+    logger.info(f"Reroll counter cleared for {npc_name}")
+    return {
+        "npc_name": npc_name,
+        "reroll_count": 0,
+        "message": "Reroll counter cleared"
+    }
+
+
+@app.post("/api/config/uncached-count")
+async def api_set_uncached_count(count: int):
+    """Update the dialogue cache uncached count (runtime only, not persisted)."""
+    global DIALOGUE_CACHE_UNCACHED_COUNT
+    if count < 0 or count > 50:
+        raise HTTPException(status_code=400, detail="Uncached count must be between 0 and 50")
+    old_count = DIALOGUE_CACHE_UNCACHED_COUNT
+    DIALOGUE_CACHE_UNCACHED_COUNT = count
+    logger.info(f"Dialogue cache uncached count changed: {old_count} -> {count}")
+    return {
+        "old_count": old_count,
+        "new_count": count,
+        "message": "Uncached count updated (runtime only)"
+    }
+
+
+@app.get("/api/history")
+async def api_get_history():
+    """Get recent request history with cache stats."""
+    with _history_lock:
+        entries = [asdict(e) for e in reversed(_request_history)]  # Most recent first
+    
+    # Calculate aggregate stats
+    total_requests = len(entries)
+    total_cache_read = sum(e["cache_read_tokens"] for e in entries)
+    total_cache_write = sum(e["cache_write_tokens"] for e in entries)
+    total_input = sum(e["input_tokens"] for e in entries)
+    
+    total_all = total_input + total_cache_read + total_cache_write
+    overall_hit_pct = (total_cache_read / total_all * 100) if total_all > 0 else 0
+    
+    return {
+        "requests": entries,
+        "stats": {
+            "total_requests": total_requests,
+            "total_cache_read_tokens": total_cache_read,
+            "total_cache_write_tokens": total_cache_write,
+            "total_input_tokens": total_input,
+            "overall_cache_hit_pct": round(overall_hit_pct, 1)
+        }
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1301,7 +2156,7 @@ async def dashboard():
   <div class="card">
     <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px">
       <div><span class="label">Endpoint</span>
-        <div class="endpoint">http://127.0.0.1:8000/v1/chat/completions</div></div>
+        <div class="endpoint">http://127.0.0.1:38700/v1/chat/completions</div></div>
       <div><span class="label">API Key</span>
         <div class="endpoint">not required</div></div>
     </div>
@@ -1323,6 +2178,12 @@ async def dashboard():
       <div><span class="label">Effort Level</span><br>
         <span class="value" style="color:#67e8f9">{THINKING_EFFORT if THINKING_ENABLED else 'n/a'}</span></div>
     </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px">
+      <div><span class="label">Streaming Mode</span><br>
+        <span class="value" style="color:{'#4ade80' if STREAMING_MODE == 'real' else '#67e8f9'}">{STREAMING_MODE}</span></div>
+      <div><span class="label">Stream Detail</span><br>
+        <span class="value" style="color:#9ca3af">{'token-by-token via stream-json' if STREAMING_MODE == 'real' else 'collect then chunk (80 chars)'}</span></div>
+    </div>
   </div>
 
   <div class="card">
@@ -1337,8 +2198,8 @@ async def dashboard():
         <td class="value" style="color:#4ade80">single response, no tool loops</td></tr>
       <tr><td class="label">MITM system rewrite</td>
         <td class="value" style="color:#4ade80">strips Claude Code blocks, injects PROMPT_HEAD + bio (cached)</td></tr>
-      <tr><td class="label">stdin</td>
-        <td class="value" style="color:#4ade80">conversation messages only (dialogue, not cached)</td></tr>
+      <tr><td class="label">dialogue caching</td>
+        <td class="value" style="color:#4ade80">reads temp files, caches history minus last {DIALOGUE_CACHE_UNCACHED_COUNT} msgs</td></tr>
       <tr><td class="label">--effort</td>
         <td class="value" style="color:{'#4ade80' if THINKING_ENABLED else '#9ca3af'}">{THINKING_EFFORT if THINKING_ENABLED else 'disabled (per-request override still works)'}</td></tr>
       <tr><td class="label">irreducible overhead</td>
@@ -1363,7 +2224,61 @@ async def dashboard():
     <div id="timing" class="timing"></div>
   </div>
 
+  <div class="card">
+    <h3 style="margin:0 0 8px; font-size:0.85rem; color:#94a3b8; text-transform:uppercase;
+               letter-spacing:0.05em">Dialogue Caching</h3>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px">
+      <div><span class="label">Uncached Messages</span><br>
+        <span class="value" style="color:#67e8f9">{DIALOGUE_CACHE_UNCACHED_COUNT}</span></div>
+      <div><span class="label">Cache Path</span><br>
+        <span class="value" style="color:#9ca3af; font-size:0.7rem; word-break:break-all">{DIALOGUE_CACHE_PATH[:50]}...</span></div>
+    </div>
+    <h4 style="margin:12px 0 8px; font-size:0.9rem; color:#f1f5f9">Cached NPCs</h4>
+    <div id="npc-list" style="font-size:0.85rem">Loading...</div>
+    <button onclick="loadNpcs()" style="margin-top:8px; background:#475569">Refresh</button>
+  </div>
+
+  <div class="card">
+    <h3 style="margin:0 0 8px; font-size:0.85rem; color:#94a3b8; text-transform:uppercase;
+               letter-spacing:0.05em">Request History</h3>
+    <div id="history-stats" style="display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; margin-bottom:12px">
+      <div style="text-align:center">
+        <div style="font-size:1.2rem; color:#4ade80" id="stat-hit-pct">--%</div>
+        <div class="label" style="font-size:0.7rem">Cache Hit</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:1.2rem; color:#67e8f9" id="stat-requests">0</div>
+        <div class="label" style="font-size:0.7rem">Requests</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:1.2rem; color:#a78bfa" id="stat-cache-read">0</div>
+        <div class="label" style="font-size:0.7rem">Cache Read</div>
+      </div>
+      <div style="text-align:center">
+        <div style="font-size:1.2rem; color:#facc15" id="stat-cache-write">0</div>
+        <div class="label" style="font-size:0.7rem">Cache Write</div>
+      </div>
+    </div>
+    <div style="max-height:250px; overflow-y:auto">
+      <table style="font-size:0.75rem">
+        <thead><tr>
+          <th style="padding:4px 6px">Time</th>
+          <th style="padding:4px 6px">NPC</th>
+          <th style="padding:4px 6px">Cache</th>
+          <th style="padding:4px 6px">Time</th>
+        </tr></thead>
+        <tbody id="history-body"></tbody>
+      </table>
+    </div>
+    <button onclick="loadHistory()" style="margin-top:8px; background:#475569">Refresh</button>
+  </div>
+
 <script>
+function esc(s) {{
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}}
 async function testChat() {{
   const btn = document.getElementById('btn');
   const resp = document.getElementById('response');
@@ -1396,16 +2311,129 @@ async function testChat() {{
   }}
   btn.disabled = false; btn.textContent = 'Send';
 }}
+
+async function loadNpcs() {{
+  const container = document.getElementById('npc-list');
+  try {{
+    const r = await fetch('/api/npcs');
+    const data = await r.json();
+    if (!data.npcs || data.npcs.length === 0) {{
+      container.innerHTML = '<span style="color:#9ca3af">No NPCs cached yet</span>';
+      return;
+    }}
+    container.innerHTML = data.npcs.map(npc => {{
+      const name = esc(npc.name);
+      const safeName = encodeURIComponent(npc.name);
+      const size = (npc.dialogue_cache_size / 1024).toFixed(1);
+      const reroll = npc.reroll_count || 0;
+      const lastAccess = npc.last_access ? new Date(npc.last_access * 1000).toLocaleTimeString() : 'never';
+      return `
+        <div style="display:flex; justify-content:space-between; align-items:center;
+                    padding:8px 0; border-bottom:1px solid #334155">
+          <div>
+            <span style="color:#f1f5f9; font-weight:500">${{name}}</span>
+            <span style="color:#9ca3af; font-size:0.75rem; margin-left:8px">${{size}}KB</span>
+            ${{reroll > 0 ? `<span style="color:#facc15; font-size:0.75rem; margin-left:8px">reroll: ${{reroll}}</span>` : ''}}
+          </div>
+          <div>
+            <button onclick="rerollNpc('${{safeName}}')"
+                    style="padding:4px 12px; font-size:0.75rem; background:#f59e0b; margin:0">
+              Reroll
+            </button>
+            ${{reroll > 0 ? `<button onclick="clearReroll('${{safeName}}')"
+                    style="padding:4px 12px; font-size:0.75rem; background:#6b7280; margin:0 0 0 4px">
+              Clear
+            </button>` : ''}}
+          </div>
+        </div>
+      `;
+    }}).join('');
+  }} catch(e) {{
+    container.innerHTML = `<span style="color:#f87171">Error: ${{e.message}}</span>`;
+  }}
+}}
+
+async function rerollNpc(encodedName) {{
+  try {{
+    const r = await fetch(`/api/npcs/${{encodedName}}/reroll`, {{method: 'POST'}});
+    const data = await r.json();
+    alert(`${{decodeURIComponent(encodedName)}}: ${{data.message}}`);
+    loadNpcs();
+  }} catch(e) {{
+    alert('Error: ' + e.message);
+  }}
+}}
+
+async function clearReroll(encodedName) {{
+  try {{
+    const r = await fetch(`/api/npcs/${{encodedName}}/clear-reroll`, {{method: 'POST'}});
+    const data = await r.json();
+    alert(`${{decodeURIComponent(encodedName)}}: ${{data.message}}`);
+    loadNpcs();
+  }} catch(e) {{
+    alert('Error: ' + e.message);
+  }}
+}}
+
+async function loadHistory() {{
+  try {{
+    const r = await fetch('/api/history');
+    const data = await r.json();
+    
+    // Update stats
+    document.getElementById('stat-hit-pct').textContent = data.stats.overall_cache_hit_pct + '%';
+    document.getElementById('stat-requests').textContent = data.stats.total_requests;
+    document.getElementById('stat-cache-read').textContent = (data.stats.total_cache_read_tokens / 1000).toFixed(1) + 'k';
+    document.getElementById('stat-cache-write').textContent = (data.stats.total_cache_write_tokens / 1000).toFixed(1) + 'k';
+    
+    // Color the hit percentage based on value
+    const hitPct = data.stats.overall_cache_hit_pct;
+    const hitEl = document.getElementById('stat-hit-pct');
+    hitEl.style.color = hitPct >= 80 ? '#4ade80' : hitPct >= 50 ? '#facc15' : '#f87171';
+    
+    // Update table
+    const tbody = document.getElementById('history-body');
+    if (!data.requests || data.requests.length === 0) {{
+      tbody.innerHTML = '<tr><td colspan="4" style="color:#9ca3af; text-align:center; padding:12px">No requests yet</td></tr>';
+      return;
+    }}
+    
+    tbody.innerHTML = data.requests.map(req => {{
+      const cacheColor = req.cache_hit_pct >= 80 ? '#4ade80' : req.cache_hit_pct >= 50 ? '#facc15' : '#f87171';
+      const cacheText = req.cache_read_tokens > 0 ? `${{req.cache_hit_pct}}%` : (req.cache_write_tokens > 0 ? 'WRITE' : '-');
+      return `
+        <tr style="border-bottom:1px solid #334155">
+          <td style="padding:4px 6px; color:#9ca3af">${{req.timestamp}}</td>
+          <td style="padding:4px 6px; color:#f1f5f9">${{esc(req.npc_name || '-')}}</td>
+          <td style="padding:4px 6px; color:${{cacheColor}}; font-weight:500">${{cacheText}}</td>
+          <td style="padding:4px 6px; color:#67e8f9">${{req.elapsed_seconds}}s</td>
+        </tr>
+      `;
+    }}).join('');
+  }} catch(e) {{
+    console.error('Failed to load history:', e);
+  }}
+}}
+
+// Load NPCs and history on page load, refresh history every 5 seconds
+document.addEventListener('DOMContentLoaded', () => {{
+  loadNpcs();
+  loadHistory();
+  setInterval(loadHistory, 5000);
+}});
 </script>
 </body></html>"""
 
 
 if __name__ == "__main__":
-    print("\n  CHIM Proxy v0.9.9 — Startup Configuration\n")
+    print("\n  CHIM Proxy v0.13.0 — Startup Configuration\n")
     print("  Content format for system prompt and conversation:")
     print("    [1] Array  — preserve CHIM block structure (JSON arrays in CLAUDE.md and stdin)")
     print("    [2] Flat   — flatten to plain text (original behavior)")
-    choice = input("\n  Select format [1/2] (default: 1): ").strip()
+    try:
+        choice = input("\n  Select format [1/2] (default: 1): ").strip()
+    except EOFError:
+        choice = ""
     CONTENT_FORMAT = "flat" if choice == "2" else "array"
     logger.info(f"Content format: {CONTENT_FORMAT}")
 
@@ -1415,7 +2443,10 @@ if __name__ == "__main__":
     print("    [3] Medium — balanced reasoning")
     print("    [4] High   — maximum reasoning")
     print("    Note: HerikaServer can override this per-request via the 'reasoning' field.")
-    t_choice = input("\n  Select effort [1/2/3/4] (default: 1): ").strip()
+    try:
+        t_choice = input("\n  Select effort [1/2/3/4] (default: 1): ").strip()
+    except EOFError:
+        t_choice = ""
     if t_choice in ("2", "3", "4"):
         THINKING_ENABLED = True
         THINKING_EFFORT = {"2": "low", "3": "medium", "4": "high"}[t_choice]
@@ -1423,8 +2454,47 @@ if __name__ == "__main__":
     else:
         logger.info("Reasoning effort: OFF (per-request override still works)")
 
-    host = "0.0.0.0"
-    port = 8000
+    print("\n  Real-time streaming (for stream=true requests):")
+    print("    [1] Off  — collect full response, then chunk to client (default)")
+    print("    [2] On   — stream tokens in real-time via --output-format stream-json")
+    try:
+        s_choice = input("\n  Enable real-time streaming [1/2] (default: 1): ").strip()
+    except EOFError:
+        s_choice = ""
+    if s_choice == "2":
+        STREAMING_MODE = "real"
+        logger.info("Streaming mode: REAL (token-by-token via stream-json)")
+    else:
+        STREAMING_MODE = "fake"
+        logger.info("Streaming mode: FAKE (collect then chunk)")
+
+    print(f"\n  Dialogue caching:")
+    print(f"    Cache path: {DIALOGUE_CACHE_PATH}")
+    print(f"    Uncached messages: {DIALOGUE_CACHE_UNCACHED_COUNT}")
+    print(f"    (Set CHIM_DIALOGUE_CACHE_PATH and CHIM_DIALOGUE_UNCACHED_COUNT env vars to change)")
+
+    # Detect WSL vEthernet IP - binding to 0.0.0.0 doesn't always work for WSL2
+    def _detect_wsl_ip():
+        """Find the vEthernet (WSL) interface IP, typically 172.17.x.x"""
+        try:
+            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+                ip = info[4][0]
+                # WSL vEthernet IPs are typically in 172.17.x.x or 172.18.x.x range
+                if ip.startswith("172.17.") or ip.startswith("172.18."):
+                    return ip
+        except Exception:
+            pass
+        return None
+
+    wsl_ip = _detect_wsl_ip()
+    if wsl_ip:
+        host = wsl_ip
+        print(f"\n  Detected WSL interface: {wsl_ip} (binding directly for WSL2 compatibility)")
+    else:
+        host = "0.0.0.0"
+        print("\n  No WSL interface detected, binding to 0.0.0.0")
+    
+    port = 38700
 
     # Check if port is available; if not, try the next few ports
     def _port_available(h, p):
@@ -1467,6 +2537,7 @@ if __name__ == "__main__":
         print(f"  Reasoning effort: {THINKING_EFFORT}")
     else:
         print("  Reasoning effort: OFF (per-request override via 'reasoning' field still works)")
+    print(f"  Streaming: {STREAMING_MODE} ({'token-by-token' if STREAMING_MODE == 'real' else 'collect then chunk'})")
     print(f"  NPC name: auto-detected from system prompt (or pass 'npc_name' in request body)")
     print()
     print("  " + "=" * 60)

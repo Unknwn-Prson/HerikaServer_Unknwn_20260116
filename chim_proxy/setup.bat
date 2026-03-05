@@ -1,18 +1,26 @@
 @echo off
 :: ============================================================
-:: CHIM Proxy v0.9.6 - One-Time Setup
-:: Must be run as Administrator!
+:: CHIM Proxy v0.13.0 - One-Time Setup
+:: Self-elevates to Administrator if needed.
 :: ============================================================
+
+:: Anchor working directory FIRST — UAC elevation starts in System32
+:: and paths with spaces or special chars (like @) break without this.
+cd /d "%~dp0"
+
+:: Check for admin privileges
 net session >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] This script must be run as Administrator!
-    echo Right-click setup.bat and select "Run as administrator"
-    pause
-    exit /b 1
+    echo Requesting administrator privileges...
+    :: Self-elevate: launch a new elevated cmd that cd's to our dir first,
+    :: then runs this script. This avoids path-quoting issues with special
+    :: characters (spaces, @) in the folder path during UAC elevation.
+    powershell -Command "Start-Process cmd.exe -ArgumentList '/K cd /d \"%CD%\" && call \"%~nx0\"' -Verb RunAs"
+    exit /b 0
 )
 
 echo ============================================================
-echo  CHIM Proxy v0.9.6 - Setup
+echo  CHIM Proxy v0.13.0 - Setup
 echo ============================================================
 echo.
 
@@ -132,39 +140,53 @@ echo [5/8] Checking HerikaServer HTTP_TIMEOUT...
 python "%~dp0ensure_timeout.py"
 echo.
 
-:: 6. Windows Firewall rule (allow inbound on port 8000)
-echo [6/8] Adding Windows Firewall rule for port 8000...
-netsh advfirewall firewall show rule name="CHIM Proxy" >nul 2>&1
+:: 6. Windows Firewall - remove Python Block rules and add Allow rules
+echo [6/9] Fixing Python firewall rules...
+::    Windows often creates Block rules for Python on Public profile (which WSL uses)
+::    These Block rules override any Allow rules, so we must remove them first
+echo       Removing any Python Block rules on Public profile...
+powershell -Command "Get-NetFirewallRule | Where-Object { $_.DisplayName -like '*python*' -and $_.Action -eq 'Block' } | Remove-NetFirewallRule" >nul 2>&1
+powershell -Command "Get-NetFirewallRule | Where-Object { $_.DisplayName -like '*Python*' -and $_.Action -eq 'Block' } | Remove-NetFirewallRule" >nul 2>&1
+netsh advfirewall firewall delete rule name="python.exe" profile=public >nul 2>&1
+echo       Adding Python Allow rule for all profiles...
+netsh advfirewall firewall delete rule name="Python (CHIM)" >nul 2>&1
+netsh advfirewall firewall add rule name="Python (CHIM)" dir=in action=allow program="%LOCALAPPDATA%\Programs\Python\Python311\python.exe" profile=any enable=yes >nul 2>&1
+netsh advfirewall firewall add rule name="Python (CHIM)" dir=in action=allow program="%LOCALAPPDATA%\Programs\Python\Python312\python.exe" profile=any enable=yes >nul 2>&1
+netsh advfirewall firewall add rule name="Python (CHIM)" dir=in action=allow program="%LOCALAPPDATA%\Programs\Python\Python313\python.exe" profile=any enable=yes >nul 2>&1
+netsh advfirewall firewall add rule name="Python (CHIM)" dir=in action=allow program="%LOCALAPPDATA%\python\pythoncore-3.14-64\python.exe" profile=any enable=yes >nul 2>&1
+netsh advfirewall firewall add rule name="Python (CHIM)" dir=in action=allow program="%LOCALAPPDATA%\python\bin\python.exe" profile=any enable=yes >nul 2>&1
+echo       Done!
+echo.
+
+:: 7. Windows Firewall rule (allow inbound on port 38700 for ALL profiles)
+echo [7/9] Adding Windows Firewall rule for port 38700...
+::    Always delete+recreate — previous installs may have a rule for a different port
+netsh advfirewall firewall delete rule name="CHIM Proxy" >nul 2>&1
+netsh advfirewall firewall add rule name="CHIM Proxy" dir=in action=allow protocol=TCP localport=38700 profile=any >nul 2>&1
 if %errorlevel% equ 0 (
-    echo       Rule already exists, skipping.
-    goto :firewall_done
-)
-netsh advfirewall firewall add rule name="CHIM Proxy" dir=in action=allow protocol=TCP localport=8000 >nul 2>&1
-if %errorlevel% equ 0 (
-    echo       Done!
+    echo       Done! (Enabled for Domain/Private/Public profiles)
 ) else (
     echo [WARN] Failed to add firewall rule.
     echo        You can add it manually in Windows Firewall settings
-    echo        or run: netsh advfirewall firewall add rule name="CHIM Proxy" dir=in action=allow protocol=TCP localport=8000
+    echo        or run: netsh advfirewall firewall add rule name="CHIM Proxy" dir=in action=allow protocol=TCP localport=38700 profile=any
 )
 :firewall_done
 echo.
 
-:: 7. Port proxy so WSL can reach the proxy on Windows
-echo [7/8] Setting up port forwarding (WSL to Windows)...
+:: 8. Clean up old port forwarding rules (no longer needed - proxy binds to WSL IP directly)
+echo [8/9] Cleaning up old portproxy rules...
+::    v0.11.0+ binds directly to WSL interface IP, so portproxy is not needed
+::    Clean up any stale rules from previous versions
 netsh interface portproxy delete v4tov4 listenport=8000 listenaddress=0.0.0.0 >nul 2>&1
-netsh interface portproxy add v4tov4 ^
-    listenport=8000 listenaddress=0.0.0.0 ^
-    connectport=8000 connectaddress=127.0.0.1
-if %errorlevel% equ 0 (
-    echo       Done!
-) else (
-    echo [WARN] Failed to add port proxy rule
-)
+netsh interface portproxy delete v4tov4 listenport=8000 listenaddress=172.17.144.1 >nul 2>&1
+netsh interface portproxy delete v4tov4 listenport=38700 listenaddress=0.0.0.0 >nul 2>&1
+netsh interface portproxy delete v4tov4 listenport=38700 listenaddress=172.17.144.1 >nul 2>&1
+netsh interface portproxy delete v4tov4 listenport=38742 listenaddress=0.0.0.0 >nul 2>&1
+echo       Cleaned up stale rules (portproxy no longer needed).
 echo.
 
 :: 8. Claude Code login (last — opens interactive TUI that blocks the script)
-echo [8/8] Claude Code authentication...
+echo [9/9] Claude Code authentication...
 where claude >nul 2>&1
 if %errorlevel% neq 0 (
     echo [WARN] 'claude' not found on PATH yet.
@@ -194,6 +216,6 @@ echo  To start the proxy, run:
 echo    start_chim_proxy.bat
 echo.
 echo  Your endpoint (from WSL/HerikaServer):
-echo    http://172.17.144.1:8000/v1/chat/completions
+echo    http://172.17.144.1:38700/v1/chat/completions
 echo ============================================================
 pause
