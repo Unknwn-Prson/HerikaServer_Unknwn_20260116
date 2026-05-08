@@ -1,0 +1,520 @@
+CHIM Cached Connector - Release Notes
+======================================
+
+CHANGES IN v1.7.8
+------------------
+Release Date: 2026-04-23
+Compatible with: CHIM 2.4.3+
+
+1. FIX: Provider selection is now enforced, not just a suggestion
+   - Previously, setting providers in the CHIM Connectors tab only sent
+     "order" to OpenRouter, which treats it as a preference — OpenRouter
+     could still route to any provider it chose
+   - Now sends "allow_fallbacks": false so OpenRouter will ONLY use the
+     specified providers and will not fall back to others
+   - Applies to both streaming and non-streaming request paths
+
+2. FIX: Wired up unused provider routing settings
+   - providers_sort, providers_to_ignore, provider_quantizations,
+     provider_max_price_input, and provider_max_price_output were defined
+     in conf_schema.json and declared as class properties but never actually
+     applied to the API request payload — now they are
+
+3. UI: Updated PROVIDER field description in conf_schema.json to clarify
+   that providers are enforced when set
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.7.7
+------------------
+Release Date: 2026-03-01
+Compatible with: CHIM 2.4.3+
+
+1. FIX: Response duplication bug in JSON format mode (v1.7.6 regression)
+   - Bug: In JSON response format, the entire LLM response was delivered twice
+   - NPCs would repeat their full dialogue with a concatenation artifact
+     where the last sentence of pass 1 and first sentence of pass 2 merged
+     without a space (e.g., "...first?These marsh-dwellers...")
+   - Root cause: _parseAndReturnContent() returned the full JSON message on
+     every call with no state tracking. The message was returned once during
+     content_block_delta streaming (when JSON became parseable) and again at
+     stream-end events (message_delta stop, message_stop, finish_reason, etc.)
+   - The v1.7.6 update added _parseAndReturnContent() calls at all stream-end
+     events for both formats, which was correct for simple format (has
+     _sentencesSent tracking) but caused duplication for JSON format (no tracking)
+   - Fix: Added _jsonMessageReturned flag to prevent duplicate delivery.
+     Once the JSON message is successfully parsed and returned, all subsequent
+     calls to _parseAndReturnContent() in JSON mode return empty string.
+   - Simple format is unaffected (already had _sentencesSent tracking)
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.7.6
+------------------
+Release Date: 2026-02-27
+Compatible with: CHIM 2.4.3+
+
+1. CHIM 2.4.3 compatibility update (from v1.6.0)
+   - Updated all package files for CHIM 2.4.3 profile-based architecture
+   - Upstream lib files synced with CHIM 2.4.3 aiagent branch
+   - All cached connector modifications re-applied and verified
+   - prompts/dialogue_prompt.php now a direct upstream overwrite
+
+2. FIX: Global Settings save failures now show visible error messages
+   - Bug: The @file_put_contents/@rename calls silently swallowed errors
+   - Users with permission issues (e.g. root-owned conf.php) saw no feedback
+   - This is an inherent upstream CHIM bug (present in aiagent branch)
+   - Fix: Pre-flight writability checks + red error banner with chmod commands
+   - Removed @ from file_put_contents (kept on fallback rename/copy/unlink)
+
+3. NEW: ui/global_settings.php now included in distribution zip
+   - Contains cached connector compatibility filter (prevents assigning
+     cached connector to incompatible CORE_CONNECTOR types: PLAYER,
+     SUMMARY, MEDIUMTERM, PROFILES)
+   - Contains driver column fetch for connector type display
+   - Includes upstream feature removals (Power Awareness, EMOTEMOODS)
+
+4. NEW: Diary Injection — recall diary entries during conversation
+   - Diary entries are searched (FTS or vector) when processing dialogue
+   - Best-matching diary injected into NPC context with time prefix
+   - Separate scoring thresholds from regular memory injection
+   - Minimum age filter prevents overly-recent entries from being recalled
+   - New offerDiary() in chat_helper_functions.php
+   - New $classifierFilter parameter on DataSearchMemory/ByVector
+
+5. NEW: Event-Based Diary Generation
+   - Alternative to sleep/wait-only diary generation
+   - Tracks qualifying events (dialogue, narration, actions) per NPC
+   - Triggers processAutoDiary() when event threshold reached
+   - Three modes: sleep_wait (original), event_count (new), both
+   - New incrementDiaryEventCounter() in dynamic_update_util.php
+
+6. NEW: Diary settings are profile-based with per-NPC overrides
+   - INJECT_DIARIES: Toggle diary injection (default: true)
+   - DIARY_THRESHOLD_MODIFIER: Scoring threshold adjustment (default: 0.0)
+   - DIARY_MIN_AGE_HOURS: Minimum age before entry is eligible (default: 1)
+   - DIARY_GENERATION_MODE: sleep_wait | event_count | both (default: sleep_wait)
+   - DIARY_EVENTS_THRESHOLD: Events before auto-generation (default: 50)
+   - All configurable at profile level and per-NPC in NPC Master
+
+7. NEW: Additional upstream overwrites included in zip
+   - main.php: Diary injection + event counter wiring
+   - lib/dynamic_update_util.php: Event-based diary counter function
+   - ui/core/tmpl/metadata_json_editor.php: Diary settings in profile editor
+   - ui/core/tmpl/override_editor.php: Diary settings in NPC override editor
+   - ui/core/npc_master.php: Diary settings in per-NPC override page
+   - ui/core/core_profiles.php: Profile page (removes deprecated AUTO_DIARY_WAIT toggle)
+   - conf/conf.sample.php: Default values for new diary settings
+
+8. CLEANUP: Removed deprecated AUTO_DIARY_WAIT setting
+   - AUTO_DIARY_WAIT replaced by DIARY_GENERATION_MODE (sleep_wait | event_count | both)
+   - Toggle removed from core_profiles.php UI
+   - Old AUTO_DIARY_WAIT values automatically stripped from metadata on profile save
+   - Updated AUTO_DIARY description to reference DIARY_GENERATION_MODE
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.6.0
+-----------------
+Release Date: 2026-02-12
+Compatible with: CHIM 2.4.3+
+
+1. CHIM 2.4.3 compatibility update
+   - Updated all package files for CHIM 2.4.3 profile-based architecture
+   - Fixed compatibility issues found in code review
+   - Removed unnecessary reasoning/Mistral overrides
+   - Updated connector VERSION string to reflect CHIM 2.4.3+
+
+2. Upstream lib files synced with CHIM 2.4.3
+   - lib/data_functions.php updated from upstream aiagent branch
+   - lib/chat_helper_functions.php updated from upstream aiagent branch
+   - All cached connector modifications re-applied and verified
+
+3. prompts/dialogue_prompt.php moved to direct upstream overwrite
+   - No longer uses ext/cached_connector/ indirection
+   - Simpler installation, fewer directories to create
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.16
+------------------
+Release Date: 2026-02-11
+Compatible with: CHIM 2.3.3+ (synced with upstream 2026-02-06)
+
+1. FIX: JSON format responses now properly returned to game
+   - Bug: JSON format messages were accumulated but never returned at stream end
+   - Root cause: Stream end handlers only flushed content for 'simple' format
+   - Fix: Added _parseAndReturnContent() call for 'json' format at all stream end points:
+     - [DONE] marker
+     - finish_reason (OpenAI format)
+     - message_delta with stop_reason (Anthropic format)
+     - message_stop event (Anthropic format)
+     - "event: message_stop" line
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.15
+------------------
+
+1. FIX: Mood and action lists now included in simple format prompts
+   - Added default mood list (50 moods) as fallback when EMOTEMOODS not set
+   - Now includes "Valid moods: ..." in simple format instruction
+   - Now includes "Valid actions: ..." when actions are enabled and FUNC_LIST exists
+   - Matches JSON format behavior for mood/action guidance
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.14
+------------------
+
+1. Restore array content structure for "None" caching mode
+   - "None" mode now keeps Anthropic-style content arrays
+   - Only "OpenAI" mode converts to simple string format
+   - OpenRouter handles the transformation for generic providers
+   - The real fix for Palmyra was removing the prefill (v1.5.13)
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.13
+------------------
+
+1. FIX: Palmyra and other Bedrock models now work with "None" caching mode
+   - Root cause: Assistant prefill message `(` caused "last message must be user" error
+   - Error was: "The model requires the last turn to be a user message"
+   - Fix: Skip assistant prefill for "None" caching mode
+   - Cache_control blocks were already being skipped for "None" mode
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.12
+------------------
+
+1. FIX: OpenRouter error messages now visible in output_from_llm.log
+   - HTTP status code errors (4xx/5xx) are now logged to output_from_llm.log
+   - Stream errors (rate limits, model errors, etc.) now logged to output_from_llm.log
+   - Also logs to Apache error log via Logger::error() for visibility
+   - Also logs to audit_request table when database is available
+   - Errors now also appear in the _buffer so they show in AI Responses tab
+
+2. Improved error visibility at all failure points:
+   - fopen exceptions
+   - Stream open failures
+   - HTTP error status codes (checked immediately after stream opens)
+   - Read errors during streaming
+   - Anthropic format error events
+   - Generic error responses in stream data
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.11
+------------------
+
+1. FIX: Minimize quality prompt not working
+   - Root cause: prompts/dialogue_prompt.php was never included in distribution
+   - Users had old version without the minimize_quality_prompt feature
+   - Now includes modified dialogue_prompt.php in distribution
+   - Added BEGIN/END CACHED CONNECTOR MODIFICATION markers for clarity
+
+2. FIX: Added 'usage' parameter to streaming payload
+   - Standard connector includes "usage": {"include": true}
+   - May improve compatibility with some models
+
+3. STILL INVESTIGATING: Palmyra not working with "None" caching
+   - v1.5.10 fixes (no reasoning, transforms, stop) didn't resolve
+   - Need to compare actual payloads between connectors for debugging
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.10
+------------------
+
+1. FIX: Additional Palmyra/generic model compatibility improvements
+   - Removed 'reasoning' parameter for "None" caching mode (unsupported by most generic models)
+   - Added 'transforms' array to match standard connector
+   - Added 'stop' array with 'USER' to match standard connector format
+   - These changes make the "None" mode payload closer to openrouterjson.php
+
+2. INVESTIGATING: Simple format actions reported as not working
+   - Code review shows action parsing logic appears correct
+   - Need more testing/logs to identify root cause
+   - JSON format actions work correctly
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.9
+-----------------
+
+1. FIX: Palmyra and other non-Anthropic models with "None" caching
+   - Root cause: Messages were always sent in Anthropic content block format
+   - Anthropic format: {"content": [{"type": "text", "text": "..."}]}
+   - OpenAI/generic format: {"content": "..."}
+   - Many models (Palmyra, etc.) don't support the Anthropic array format
+   - Added _convertToSimpleContentFormat() to convert messages for OpenAI/None modes
+
+2. UI: Simplified caching provider options
+   - Renamed "Anthropic" to "Claude | Gemini" (both work with Anthropic format)
+   - Renamed "OpenAI" to "GPT" for clarity
+   - Removed separate "Gemini" option (use "Claude | Gemini" instead)
+   - Kept "None" for models that don't support caching
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.8
+-----------------
+
+1. CRITICAL FIX: Gemini response cutoffs in simple format
+   - Root cause: _flushRemainingSimpleFormat() returned only ONE sentence at a time
+   - When stream ends, caller stops calling process() after isDone() returns true
+   - This caused remaining buffered sentences to never be returned
+   - Claude worked because Anthropic format has multiple end events (message_delta + message_stop)
+   - Gemini (OpenAI format) only has finish_reason, then stream ends immediately
+
+2. Solution: Added _flushAllRemainingSimpleFormat() method
+   - Returns ALL remaining sentences concatenated, not one at a time
+   - Used at all stream termination points: finish_reason, message_stop, [DONE], feof
+   - Ensures no content is lost regardless of how quickly stream closes
+
+3. Additional fix: JSON format now clears buffer after returning
+   - Prevents duplicate message returns on subsequent process() calls
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.7
+-----------------
+
+1. FIX: Added flush handling in message_delta stop_reason case
+   - Previously only message_stop had flush logic
+
+2. FIX: Added isDone() block flush check at start of process()
+   - Safety net for remaining content when stream is already done
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.6
+-----------------
+
+1. MAJOR: Synced lib files with upstream CHIM (2026-02-06)
+   - Updated lib/data_functions.php from upstream (now 6440+ lines)
+   - Updated lib/chat_helper_functions.php from upstream (now 2200+ lines)
+   - Fixes "Call to undefined function getGoldFromMetadata()" error
+   - Includes all CHIM stealth updates since 2025-12-17
+
+2. Re-applied cached connector modifications to updated files:
+   - LOCATION_BLACKLIST defensive fix in data_functions.php
+   - handlesSentenceSplitting bypass in data_functions.php
+   - PRESERVE_ASTERISKS mode in chat_helper_functions.php
+   - DISABLE_SENTENCE_FILTERS bypass in chat_helper_functions.php
+
+3. Distribution uses subdirectory structure to prevent accidental overwrites
+
+NOTE: Only overwrites lib/data_functions.php and lib/chat_helper_functions.php
+      (same files as v1.5.0-v1.5.5, just now synced with upstream)
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.5
+-----------------
+
+1. NEW: Added fast_request() method for compatibility
+   - Allows cached connector to be used for non-streaming requests
+   - Fixes fatal error "Call to undefined method fast_request()"
+   - Supports CORE_CONNECTOR_MEDIUMTERM, CORE_CONNECTOR_SUMMARY use cases
+   - Enables cached connector to handle all connector type scenarios
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.4
+-----------------
+
+1. NEW: "Disable Sentence Filters" setting (defaults ON)
+   - Bypasses legacy returnLines() checks that cause response cutoffs
+   - Skips: array check, <2 char check, "The Narrator:" check
+   - Also changed return to continue so bad sentences don't kill the rest
+   - Fixes Gemini/other model responses being cut off mid-stream
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.3
+-----------------
+
+1. BUG FIX: "Preserve Asterisk Content" now truly preserves asterisks
+   - Previously was stripping * characters while keeping text (wrong)
+   - Now skips ALL asterisk processing when enabled
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.2
+-----------------
+
+1. NEW: "None (no caching)" option for Provider Caching Type
+   - Allows using connector features without any cache markers
+   - Fixes compatibility with non-cached models like Palmyra X5
+   - Skips all cache_control parameters in API requests
+
+2. UI: Marked Gemini caching as "(untested)" in dropdown
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.1
+-----------------
+
+1. BUG FIX: Thinking toggle not working on Claude/Anthropic models
+   - Changed default thinking_tokens from 1000 to 1024
+   - Anthropic requires minimum 1024 budget_tokens for extended thinking
+   - This caused thinking to work on Gemini but silently fail on Claude Opus 4.5
+   - Updated UI inputs with min="1024" and informative placeholder
+
+--------------------------------------------------------------------------------
+
+CHANGES IN v1.5.0
+-----------------
+
+1. RESTRUCTURED FOR MINIMAL UPSTREAM OVERWRITES
+   - dialogue_prompt.php override moved to ext/cached_connector/ (no upstream overwrite)
+   - Reasoning token stripping moved to standalone lib/reasoning_helpers.php
+   - Only 2 upstream files require overwriting (down from 3 in v1.4):
+     * lib/data_functions.php (handlesSentenceSplitting + LOCATION_BLACKLIST fix)
+     * lib/chat_helper_functions.php (PRESERVE_ASTERISKS mode)
+
+2. NEW FEATURES
+   - Disable Refusal Filter setting (defaults ON)
+     * Prevents checkOAIComplains() false positives from killing valid dialogue
+     * Root cause of Gemini/Palmyra response cutoffs (words like "sorry", "can't",
+       "assist" in normal RPG dialogue trigger the filter)
+     * Uses existing OPENAI_FILTER_DISABLED mechanism
+   - Preserve Asterisk Content setting (defaults OFF)
+     * New 'none' mode in unmoodSentence() strips asterisk characters but keeps text
+     * Prevents loss of emphasis formatting (*really*) and narration cues
+
+3. BUG FIXES
+   - Fixed LOCATION_BLACKLIST fatal TypeError in upstream data_functions.php
+     * explode() received array [] instead of string "" as fallback
+     * Added isset() check for undefined global variable
+   - Ported reasoning token stripping functions (lost in v2.0 upgrade)
+     * stripReasoningTokens(), hasUnclosedReasoningMarker(), extractReasoningFreeContent()
+     * Prevents <think>/<thinking> tags from leaking into NPC dialogue
+
+4. ARCHITECTURE
+   - ext/cached_connector/dialogue_prompt.php: Uses CHIM's requireFilesRecursively()
+     to override $TEMPLATE_DIALOG without touching upstream file
+   - lib/reasoning_helpers.php: Standalone file loaded by connector with
+     require_once + file_exists() guard
+   - All modifications in upstream files marked with BEGIN/END CACHED CONNECTOR comments
+
+5. FILES IN PACKAGE
+
+   CORE FILES:
+   - connector/openrouterjsoncached.php (v1.5.0)
+   - connector/openrouterjsoncached_helpers.php
+   - lib/core/llm_connector.class.php
+   - ui/core/llm_connectors.php (v1.5.0)
+   - conf/conf_schema.json
+
+   NEW FILES (added to CHIM):
+   - lib/reasoning_helpers.php
+   - ext/cached_connector/dialogue_prompt.php
+
+   UPSTREAM OVERWRITES:
+   - lib/data_functions.php (2 modifications + 1 upstream bug fix)
+   - lib/chat_helper_functions.php (1 modification)
+
+   DOCUMENTATION:
+   - CHANGELOG.txt (this file)
+   - PACKAGE_CONTENTS.txt
+   - INSTALLATION_INSTRUCTIONS.txt
+   - CACHED_CONNECTOR_UPGRADE_AUDIT.md
+   - FOUND_ISSUES.md
+   - connector/OPENROUTERJSONCACHED_README.md
+
+============================================================
+
+CHIM Cached Connector v2.0.1 - Release Notes
+============================================
+Release Date: 2026-01-29
+Compatible with: CHIM 2.2, CHIM 2.3.3
+
+CHANGES IN v2.0.1
+-----------------
+- Updated for CHIM 2.3.3 compatibility
+- Added Groq connector support in llm_connector.class.php
+- Updated close() method signature to match CHIM 2.3.3
+- Improved getConnector() with validation and remove_action_prompt support
+- Alphabetical sorting in readAll() and getAllFk()
+- Updated default model to google/gemini-2.5-flash
+
+NOTE: v2.0.1 dropped 3 ADDITIONALS files from v1.4, causing feature loss.
+See CACHED_CONNECTOR_UPGRADE_AUDIT.md for details. Fixed in v1.5.0.
+
+============================================================
+
+CHIM Cached Connector v2.0 - Release Notes
+==========================================
+Release Date: 2026-01-28
+Compatible with: CHIM 2.2
+
+OVERVIEW
+--------
+v2.0 is a major release that ports the cached connector from CHIM 2.0.5 to CHIM 2.2.
+
+KEY CHANGES FROM v1.4
+---------------------
+
+1. ARCHITECTURE REWRITE
+   - Completely rewritten to follow CHIM 2.2 connector architecture
+   - 4-part open() structure (open, _openPart2, _openPart3, _openPart4)
+   - Streaming-only design (fast_request removed)
+   - Format-aware process() method for Anthropic/OpenAI SSE formats
+
+2. NEW CONFIGURATION OPTIONS
+   - memory_mode: 'accumulate' (deduplicate in cache) or 'fresh' (like regular connector)
+   - cache_invalidation_mode: 'time_based' or 'sync_updates' (experimental)
+
+3. INCOMPATIBLE CONNECTOR FILTERING
+   - Cached connector hidden from CORE_CONNECTOR types that use fast_request
+
+4. BUG FIXES
+   - Null-safe handling for empty context arrays
+   - function_exists check for stripReasoningTokens
+
+5. STREAMING-ONLY DESIGN
+   - fast_request() method removed entirely
+   - All operations use streaming for better user experience
+
+============================================================
+
+CHIM Cached Connector v1.4 - Release Notes
+==========================================
+Release Date: 2026-01-21
+Compatible with: CHIM 2.0.3
+
+OVERVIEW
+--------
+v1.4 restructured the package into CORE and ADDITIONALS.
+
+KEY CHANGES
+-----------
+- CORE/ADDITIONALS split for easier maintenance
+- Removed verbose connector (never worked properly)
+- Added conditional UI toggle for Minimize Quality Instructions
+
+PREVIOUS RELEASES
+-----------------
+
+v1.3.4 (2026-01-16):
+- Fixed asterisk/dash stripping in sentence splitting
+
+v1.3.3 (2025-11-16):
+- Removed MINIMUM_SENTENCE_SIZE bottleneck for simple format
+- True sentence-by-sentence streaming
+- Added handlesSentenceSplitting() method
+
+v1.3.2:
+- Fixed custom_system_instruction placement
+
+v1.3.1:
+- Conditional "Provide variety" filtering
+
+v1.2.x:
+- Advanced caching support
+- Thinking/Reasoning support
+- Flexible response formats

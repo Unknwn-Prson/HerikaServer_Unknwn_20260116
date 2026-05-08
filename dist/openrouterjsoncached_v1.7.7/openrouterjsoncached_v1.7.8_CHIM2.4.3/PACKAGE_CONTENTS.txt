@@ -1,0 +1,136 @@
+CHIM Cached Connector v1.7.8 - Package Contents
+================================================
+
+Compatible with: CHIM 2.4.3+
+Release Date: 2026-04-23
+
+PACKAGE STRUCTURE
+-----------------
+
+CORE FILES (Required - Minimum for connector to function):
+- conf/conf_schema.json              - Connector registration + diary settings schema
+- lib/core/llm_connector.class.php   - Connector instantiation
+- ui/core/llm_connectors.php         - Configuration UI with cache management
+- connector/openrouterjsoncached.php - Main connector (v1.7.8)
+- connector/openrouterjsoncached_helpers.php - Helper functions
+
+UPSTREAM OVERWRITES (Replace upstream files - marked with BEGIN/END comments):
+- lib/data_functions.php             - handlesSentenceSplitting + LOCATION_BLACKLIST fix + diary classifier filter
+- lib/chat_helper_functions.php      - PRESERVE_ASTERISKS mode + offerDiary() injection function
+- lib/dynamic_update_util.php        - incrementDiaryEventCounter() for event-based diary generation
+- prompts/dialogue_prompt.php        - Minimize Quality Instructions feature
+- main.php                           - Diary injection wiring + event counter calls
+- conf/conf.sample.php               - Default values for diary settings
+- ui/global_settings.php             - Save bug fix + cached connector compatibility filter
+- ui/core/tmpl/metadata_json_editor.php - Diary settings in profile editor UI
+- ui/core/tmpl/override_editor.php   - NPC override editor with diary settings
+- ui/core/npc_master.php             - Diary settings in per-NPC override editor
+- ui/core/core_profiles.php          - Profile page with deprecated AUTO_DIARY_WAIT toggle removed
+
+DOCUMENTATION:
+- CHANGELOG.txt
+- PACKAGE_CONTENTS.txt (this file)
+- INSTALLATION_INSTRUCTIONS.txt
+- connector/OPENROUTERJSONCACHED_README.md
+
+DIRECTORY STRUCTURE
+-------------------
+
+openrouterjsoncached_v1.7.8_CHIM2.4.3/
+├── CHANGELOG.txt
+├── PACKAGE_CONTENTS.txt (this file)
+├── INSTALLATION_INSTRUCTIONS.txt
+├── main.php                                    [UPSTREAM OVERWRITE]
+│
+├── [CORE]
+├── conf/
+│   ├── conf_schema.json
+│   └── conf.sample.php                         [UPSTREAM OVERWRITE]
+├── connector/
+│   ├── openrouterjsoncached.php
+│   ├── openrouterjsoncached_helpers.php
+│   └── OPENROUTERJSONCACHED_README.md
+├── lib/
+│   ├── core/
+│   │   └── llm_connector.class.php
+│   ├── data_functions.php                      [UPSTREAM OVERWRITE]
+│   ├── chat_helper_functions.php               [UPSTREAM OVERWRITE]
+│   └── dynamic_update_util.php                 [UPSTREAM OVERWRITE]
+├── prompts/
+│   └── dialogue_prompt.php                     [UPSTREAM OVERWRITE]
+└── ui/
+    ├── global_settings.php                     [UPSTREAM OVERWRITE]
+    └── core/
+        ├── llm_connectors.php
+        ├── npc_master.php                      [UPSTREAM OVERWRITE]
+        ├── core_profiles.php                   [UPSTREAM OVERWRITE]
+        └── tmpl/
+            ├── metadata_json_editor.php        [UPSTREAM OVERWRITE]
+            └── override_editor.php             [UPSTREAM OVERWRITE]
+
+WHAT EACH CATEGORY MEANS
+-------------------------
+
+CORE FILES: The connector itself plus its registration in CHIM's systems.
+These are the minimum required files. Without them, the connector does not
+appear in the UI and cannot be used.
+
+UPSTREAM OVERWRITES: Modified versions of CHIM 2.4.3 files. These contain
+small, clearly marked modifications. Installing them replaces the upstream
+version. Each modification is bracketed with:
+  // --- BEGIN CACHED CONNECTOR MODIFICATION ---
+  // --- END CACHED CONNECTOR MODIFICATION ---
+Or for diary features:
+  // --- BEGIN DIARY INJECTION ---
+  // --- END DIARY INJECTION ---
+
+INSTALLATION SCENARIOS
+----------------------
+
+Scenario 1: Full Installation (Recommended)
+- Install ALL files (Core + Overwrites)
+- All features available including diary injection and event-based diary generation
+
+Scenario 2: Core Only (Safe, Partial Features)
+- Install Core files only (no upstream overwrites)
+- Connector works with main features
+- Missing: immediate simple-format streaming, PRESERVE_ASTERISKS,
+  LOCATION_BLACKLIST fix, diary injection, save bug fix
+
+Scenario 3: Core + Select Overwrites
+- Install Core files + only the overwrites you want
+- e.g. Skip diary features but keep save bug fix and streaming improvements
+
+Scenario 4: Quick Restore After CHIM Update
+1. Install Core files to restore connector
+2. Install Overwrites after reviewing CHIM changes
+
+FEATURE-TO-FILE MAPPING
+------------------------
+
+| Feature                       | File(s)                               | Category      |
+|-------------------------------|---------------------------------------|---------------|
+| Connector itself              | connector/openrouterjsoncached*.php   | Core          |
+| UI settings                   | ui/core/llm_connectors.php            | Core          |
+| Connector registration        | lib/core/llm_connector.class.php      | Core          |
+| Config schema                 | conf/conf_schema.json                 | Core          |
+| Immediate simple streaming    | lib/data_functions.php                | Overwrite     |
+| LOCATION_BLACKLIST fix        | lib/data_functions.php                | Overwrite     |
+| Diary classifier filter       | lib/data_functions.php                | Overwrite     |
+| Preserve Asterisk Content     | lib/chat_helper_functions.php         | Overwrite     |
+| Diary injection (offerDiary)  | lib/chat_helper_functions.php         | Overwrite     |
+| Diary injection wiring        | main.php                              | Overwrite     |
+| Event-based diary generation  | lib/dynamic_update_util.php           | Overwrite     |
+| Diary settings defaults       | conf/conf.sample.php                  | Overwrite     |
+| Diary profile UI              | ui/core/tmpl/metadata_json_editor.php | Overwrite     |
+| Diary per-NPC overrides       | ui/core/npc_master.php                | Overwrite     |
+| Minimize Quality Instructions | prompts/dialogue_prompt.php           | Overwrite     |
+| Save error visibility         | ui/global_settings.php                | Overwrite     |
+| Connector type compatibility  | ui/global_settings.php                | Overwrite     |
+| Disable Refusal Filter        | connector/openrouterjsoncached.php    | Core (built-in)|
+
+VERSION INFORMATION
+-------------------
+Package: CHIM Cached Connector v1.7.8
+CHIM Compatibility: 2.4.3+
+Connector Version: 1.7.0

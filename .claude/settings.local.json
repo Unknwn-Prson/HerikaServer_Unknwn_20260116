@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::OpenRead\\('C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.7.zip'\\).Entries | ForEach-Object { $_.FullName }\")",
+      "Bash(powershell -NoProfile -Command \"$zip = [System.IO.Compression.ZipFile]::OpenRead\\('C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.7.zip'\\); foreach\\($e in $zip.Entries\\) { Write-Host $e.FullName }; $zip.Dispose\\(\\)\")",
+      "Bash(powershell -NoProfile -Command \"Expand-Archive -Path 'C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.7.zip' -DestinationPath 'C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.7' -Force\")",
+      "Bash(powershell -NoProfile -Command \"Compress-Archive -Path 'C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.7\\\\openrouterjsoncached_v1.7.8_CHIM2.4.3' -DestinationPath 'C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.8.zip'\")",
+      "Bash(powershell -NoProfile -Command \"Compress-Archive -Path ''C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.7\\\\openrouterjsoncached_v1.7.8_CHIM2.4.3'' -DestinationPath ''C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.8.zip''\")"
+    ]
+  }
+}
