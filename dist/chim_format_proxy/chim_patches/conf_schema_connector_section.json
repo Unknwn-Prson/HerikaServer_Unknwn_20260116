@@ -1,0 +1,49 @@
+{
+    "_comment": "Add 'openrouterjsonreformat' to the CONNECTORS.values array, and add this section inside the CONNECTOR object alongside openrouterjson, openrouter, etc.",
+
+    "openrouterjsonreformat": {
+      "_title":"OpenRouter API (Format Proxy)",
+      "url": {"type":"url","description":"Format proxy URL. Should be: <code>http://127.0.0.1:38800/v1/chat/completions?upstream=YOUR_UPSTREAM_URL</code><br>For OpenRouter: <code>?upstream=https://openrouter.ai/api/v1/chat/completions</code><br>For Claude proxy: <code>?upstream=http://127.0.0.1:38700/v1/chat/completions</code>","helpurl":""},
+      "model": {"type":"ormodellist","description":"LLM model to use. Passed through to the upstream API.","helpurl":"https://openrouter.ai/models"},
+      "reasoning_model": {"type":"boolean","userlvl":"pro","description":"Select <strong>True</strong> if this is a reasoning model and you want to remove <strong>CoT</strong> (text between 'think' tags).","helpurl":"https://openrouter.ai/models?fmt=cards&input_modalities=text&supported_parameters=reasoning"},
+
+      "x_input_format": {"type":"select","values":["clean_text","vanilla"],"userlvl":"basic","description":"<strong>Input format</strong> — how past NPC dialogue appears in context history.<br><strong>clean_text:</strong> (Recommended) Rewrites JSON assistant messages into natural text like <code>Lydia: I'll follow you. [Follow > Player]</code>. Improves response quality by removing JSON noise from context.<br><strong>vanilla:</strong> Pass through CHIM's default JSON-formatted assistant messages unchanged."},
+      "x_input_include_name": {"type":"boolean","userlvl":"basic","description":"Include NPC name prefix in rewritten dialogue: <code>Lydia: message</code>. Always recommended."},
+      "x_input_include_mood": {"type":"boolean","userlvl":"basic","description":"Include mood in rewritten dialogue: <code>Lydia (concerned): message</code>. Can add context but also noise."},
+      "x_input_include_action": {"type":"boolean","userlvl":"basic","description":"Include non-Talk actions in rewritten dialogue: <code>message [Follow > Player]</code>. Helps the model understand action history."},
+      "x_input_include_listener": {"type":"boolean","userlvl":"basic","description":"Include listener in rewritten dialogue: <code>(to Player) message</code>. Useful for multi-NPC conversations."},
+
+      "x_output_format": {"type":"select","values":["vanilla","simple"],"userlvl":"basic","description":"<strong>Output format</strong> — what format the LLM responds in.<br><strong>vanilla:</strong> Standard CHIM JSON format. The proxy passes the response through unchanged.<br><strong>simple:</strong> Lightweight <code>(mood)(listener)(action)(target) dialogue</code> format. The proxy converts the response back to JSON for CHIM. Uses fewer tokens and lets the model focus on dialogue quality."},
+      "x_output_include_mood": {"type":"boolean","userlvl":"basic","description":"Include <code>(mood)</code> field in simple output format. Used for NPC animations."},
+      "x_output_include_action": {"type":"boolean","userlvl":"basic","description":"Include <code>(action)</code> field in simple output format. Required for NPC actions like Follow, Attack, etc."},
+      "x_output_include_target": {"type":"boolean","userlvl":"basic","description":"Include <code>(target)</code> field in simple output format. Specifies who/what the action targets."},
+      "x_output_include_listener": {"type":"boolean","userlvl":"basic","description":"Include <code>(listener)</code> field in simple output format. Specifies who the NPC is speaking to."},
+
+      "x_upstream_type": {"type":"select","values":["direct","claude_proxy"],"userlvl":"pro","description":"What's downstream of the format proxy.<br><strong>direct:</strong> Format proxy connects directly to OpenRouter/OpenAI/etc. Proxy handles cache marker placement.<br><strong>claude_proxy:</strong> Format proxy connects to the Claude subscription proxy. Cache markers are deferred to the Claude proxy."},
+      "x_proxy_port": {"type":"integer","userlvl":"pro","description":"Port the format proxy listens on. Default: 38800. Change if the default conflicts with another service."},
+
+      "fallback_models": {"type":"string","userlvl":"wip","description":"List of fallback models to use when the main model returns an error. Comma-separated list.","helpurl":"https://openrouter.ai/docs/features/model-routing#the-models-parameter"},
+      "PROVIDER": {"type":"string","userlvl":"pro","description":"Leave blank unless you want to manually select providers from OpenRouter. Comma-separated case sensitive list.","helpurl":"https://openrouter.ai/docs/features/provider-routing#ordering-specific-providers"},
+      "providers_sort": {"type":"select","values":["default","price","throughput","latency"],"userlvl":"wip","description":"Prioritize providers on selected attribute.","helpurl":"https://openrouter.ai/docs/features/provider-routing#provider-sorting"},
+      "providers_to_ignore": {"type":"string","userlvl":"wip","description":"Providers to ignore. Comma-separated case sensitive list.","helpurl":"https://openrouter.ai/docs/features/provider-routing#ignoring-providers"},
+      "provider_quantizations": {"type":"string","userlvl":"wip","description":"Quantization levels to filter by. Comma-separated case sensitive list.","helpurl":"https://openrouter.ai/docs/features/provider-routing#quantization"},
+      "provider_max_price_input": {"type":"number","userlvl":"wip","description":"Use only providers that have lower input price per million tokens. Zero to disable.","helpurl":"https://openrouter.ai/docs/features/provider-routing#max-price"},
+      "provider_max_price_output": {"type":"number","userlvl":"wip","description":"Use only providers that have lower output price per million tokens. Zero to disable.","helpurl":"https://openrouter.ai/docs/features/provider-routing#max-price"},
+      "max_tokens": {"type":"integer","description":"Maximum tokens to generate.","helpurl":"https://openrouter.ai/docs/api-reference/parameters#max-tokens"},
+      "temperature": {"type":"number","description":"Temperature [0-2]","helpurl":"https://openrouter.ai/docs/api-reference/parameters#temperature"},
+      "presence_penalty": {"userlvl":"pro","type":"number","description":"Presence Penalty [(-2)-2]","helpurl":"https://openrouter.ai/docs/api-reference/parameters#presence-penalty"},
+      "frequency_penalty": {"userlvl":"pro","type":"number","description":"Frequency Penalty [(-2)-2]","helpurl":"https://openrouter.ai/docs/api-reference/parameters#frequency-penalty"},
+      "repetition_penalty": {"userlvl":"pro","type":"number","description":"Repetition Penalty [0-2]","helpurl":"https://openrouter.ai/docs/api-reference/parameters#repetition-penalty"},
+      "top_p": {"userlvl":"pro","type":"number","description":"Top_P [0-1]","helpurl":"https://openrouter.ai/docs/api-reference/parameters#top-p"},
+      "top_k": {"userlvl":"pro","type":"number","description":"Top_K [0-100]","helpurl":"https://openrouter.ai/docs/api-reference/parameters#top-k"},
+      "min_p": {"userlvl":"pro","type":"number","description":"Min_P [0-1]","helpurl":"https://openrouter.ai/docs/api-reference/parameters#min-p"},
+      "top_a": {"userlvl":"pro","type":"number","description":"Top_A [0-1]","helpurl":"https://openrouter.ai/docs/api-reference/parameters#top-a"},
+      "ENFORCE_JSON": {"type":"boolean","description":"Enforce JSON output format. Only used when Output Format is 'vanilla'. The proxy disables this automatically when Output Format is 'simple'.","helpurl":"https://openrouter.ai/docs/api-reference/parameters#response-format"},
+      "PREFILL_JSON": {"type":"boolean","userlvl":"pro","description":"Prefill JSON response for dumber LLMs. Only used when Output Format is 'vanilla'.","helpurl":"https://openrouter.ai/docs#format"},
+      "MAX_TOKENS_MEMORY": {"type":"integer","userlvl":"wip","description":"No longer used."},
+      "API_KEY": {"type":"apikey","description":"API key for the upstream service (OpenRouter, etc.)","code":"OPENAI_API_KEY"},
+      "xreferer": {"userlvl":"wip","type":"string","description":"Stub needed header. Keep default."},
+      "xtitle": {"userlvl":"wip","type":"string","description":"Stub needed header. Keep default."},
+      "json_schema": {"type":"boolean","userlvl":"pro","description":"Enable structured output schema. Only used when Output Format is 'vanilla'.","helpurl":"https://openrouter.ai/docs/structured-outputs#model-support"}
+    }
+}

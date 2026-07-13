@@ -1,0 +1,34 @@
+# CHIM Format Proxy Configuration
+# ---------------------------------
+# This file controls how the proxy identifies dynamic vs static content
+# in CHIM's system prompt. When CHIM adds new sections, add them here.
+# The proxy re-reads this file on SIGHUP or via POST /api/config/reload.
+
+# Regex pattern that marks where dynamic content begins in the system prompt.
+# The first line matching this pattern (and everything after it) is extracted
+# from the system message and relocated to a late user message.
+# Uses Python re.MULTILINE — ^ matches start of each line.
+dynamic_split_pattern: "^#+ *(Environmental Context|Additional Information|Current Status)"
+
+# Subsection patterns to extract even if they appear BEFORE the split point
+# (e.g., Equipment nested inside a character bio section).
+# Each pattern is matched with re.MULTILINE. The subsection runs from the
+# matching line until the next heading of equal or higher level, or end of text.
+dynamic_subsections:
+  - "^### *Equipment"
+  - "^### *Combat Vitals"
+  - "^### *Arousal Status"
+  - "^### *Cleanliness"
+  - "^### *Physical Appearance"
+
+# Messages left outside the cache prefix (only for x_upstream_type=direct).
+# Higher = more dynamic context but less caching efficiency.
+uncached_count: 5
+
+# Logging
+log_level: INFO
+log_file: logs/format_proxy.log
+
+# Server
+host: "127.0.0.1"
+port: 38800

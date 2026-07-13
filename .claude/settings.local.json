@@ -5,7 +5,15 @@
       "Bash(powershell -NoProfile -Command \"$zip = [System.IO.Compression.ZipFile]::OpenRead\\('C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.7.zip'\\); foreach\\($e in $zip.Entries\\) { Write-Host $e.FullName }; $zip.Dispose\\(\\)\")",
       "Bash(powershell -NoProfile -Command \"Expand-Archive -Path 'C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.7.zip' -DestinationPath 'C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.7' -Force\")",
       "Bash(powershell -NoProfile -Command \"Compress-Archive -Path 'C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.7\\\\openrouterjsoncached_v1.7.8_CHIM2.4.3' -DestinationPath 'C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.8.zip'\")",
-      "Bash(powershell -NoProfile -Command \"Compress-Archive -Path ''C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.7\\\\openrouterjsoncached_v1.7.8_CHIM2.4.3'' -DestinationPath ''C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.8.zip''\")"
+      "Bash(powershell -NoProfile -Command \"Compress-Archive -Path ''C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.7\\\\openrouterjsoncached_v1.7.8_CHIM2.4.3'' -DestinationPath ''C:\\\\Users\\\\Jean\\\\Desktop\\\\GitHub\\\\HerikaServer_Unknwn_20260116\\\\dist\\\\openrouterjsoncached_v1.7.8.zip''\")",
+      "Read(///wsl.localhost/DwemerAI4Skyrim3/var/www/html/**)",
+      "Read(//mnt/wsl/DwemerAI4Skyrim3/var/www/html/**)",
+      "Bash(wsl -d DwemerAI4Skyrim3 ls /var/www/html/HerikaServer/)",
+      "Bash(wsl *)",
+      "Bash(wsl.exe *)",
+      "Bash(cmd.exe *)",
+      "Bash(powershell.exe *)",
+      "Bash(powershell *)"
     ]
   }
 }

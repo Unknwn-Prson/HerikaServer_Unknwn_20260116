@@ -1,0 +1,26 @@
+PATCH for ui/core/llm_connectors.php
+=====================================
+
+Find the driver <select> dropdown (search for "driver_select"):
+
+    <select id="driver_select" style="display:none">
+        <option value="openrouterjson">OpenRouter JSON</option>
+        <option value="openaijson">OpenAI JSON</option>
+        <option value="google_openaijson">Google OpenAI JSON</option>
+        <option value="groqjson">Groq JSON</option>
+        <option value="player2json">Player2 JSON</option>
+    </select>
+
+Add this line after the Player2 JSON option:
+
+        <option value="openrouterjsonreformat">OpenRouter JSON (Format Proxy)</option>
+
+=====================================
+
+Also find the CONNECTORS selectmultiple in conf/conf_schema.json:
+
+    "CONNECTORS": {"type":"selectmultiple","values":["openaijson","google_openaijson","web_connector","koboldcppjson","openrouterjson","openai","koboldcpp","openrouter","player2json"],...}
+
+Add "openrouterjsonreformat" to the values array:
+
+    "CONNECTORS": {"type":"selectmultiple","values":["openaijson","google_openaijson","web_connector","koboldcppjson","openrouterjson","openrouterjsonreformat","openai","koboldcpp","openrouter","player2json"],...}
